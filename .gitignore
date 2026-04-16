@@ -1,0 +1,23 @@
+cat > .gitignore <<'EOF'
+# large genomics files
+*.vcf
+*.vcf.gz
+*.tbi
+*.bam
+*.bai
+*.fastq
+*.fastq.gz
+
+# pipeline outputs
+results/
+Imputation/
+Annotation/
+Features/
+
+# reference data
+Data/reference_panel/
+
+# logs/temp
+*.log
+*.tmp
+EOF
