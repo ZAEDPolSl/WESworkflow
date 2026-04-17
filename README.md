@@ -1,5 +1,6 @@
 # WESworkflow
-A Practical Workflow for Correcting Kit-specific Effects in Whole-Exome Sequencing Data
+**A Practical Workflow for Correcting Kit-specific Effects in Whole-Exome Sequencing Data**
+This repository provides an end-to-end workflow for processing whole-exome sequencing (WES) data, from raw reads to gene-level feature matrices (CADD-weighted Allele Fraction), batch effect assessment, and imputation-based correction.
 
 ---
 
