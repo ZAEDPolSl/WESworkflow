@@ -8,6 +8,11 @@
 #
 # Input: multisample VCF (e.g. GLnexus output)
 # Output: per-chromosome imputed and indexed VCF files
+#
+# Reference panel is available at:
+# https://doi.org/10.5281/zenodo.19626919 and should be downloaded into "Data/reference_panel/EUR_nochr" path
+
+# Genetic maps are not included and should be downloaded separately.
 
 WORKDIR="path/to/results/dir" # all the downstream subdirectories with intermediate files will be created here
 IN_VCF="$WORKDIR/Genotyping/genotyped_multisample.vcf.gz" # GLnexus output
@@ -73,4 +78,3 @@ parallel -j 23 "
 
     bcftools index -f "$OUT_DIR/chr{1}.vcf.gz"
 " ::: {1..22} X
-
