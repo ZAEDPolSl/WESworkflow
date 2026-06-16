@@ -167,7 +167,7 @@ Data/gnomad_lofs/
 
 * Reference panel (EUR subset):
 
-  * provided separately via Zenodo (see DOI)
+  * provided separately via Zenodo ([here](https://zenodo.org/uploads/19628030))
 
 ---
 

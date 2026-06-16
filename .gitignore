@@ -21,4 +21,4 @@ Data/reference_panel/
 # logs/temp
 *.log
 *.tmp
-EOF
+EOFconfig/local_config.yaml
