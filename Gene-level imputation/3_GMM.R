@@ -28,7 +28,6 @@
 
 library(data.table)
 library(ggplot2)
-library(httpgd)
 library(tidyr)
 library(dplyr)
 library(stringr)
