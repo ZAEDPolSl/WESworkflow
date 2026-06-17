@@ -1,0 +1,53 @@
+project:
+  name: "WESworkflow"
+  genome_build: "GRCh38"
+
+environment:
+  conda_env: "wes-env"
+  r_clean_command: "R_LIBS= R_LIBS_USER= R_LIBS_SITE= R_PROFILE_USER=/dev/null Rscript --vanilla"
+
+tools:
+  deepvariant: "/path/to/deepvariant"
+  glnexus_cli: "/path/to/glnexus_cli"
+  beagle_jar: "/path/to/beagle.5.5.jar"
+  annovar_dir: "/path/to/annovar"
+  table_annovar: "/path/to/annovar/table_annovar.pl"
+  convert2annovar: "/path/to/annovar/convert2annovar.pl"
+  annotate_variation: "/path/to/annovar/annotate_variation.pl"
+
+resources:
+  reference_fasta: "/path/to/GRCh38.p14.fa"
+  reference_fasta_index: "/path/to/GRCh38.p14.fa.fai"
+  bwa_index_prefix: "/path/to/GRCh38.p14.fa"
+  refseq_bed: "/path/to/refseq_exonic_regions.bed"
+  liftover_chain: "/path/to/GRCh37_to_GRCh38.chain.gz"
+  cadd_prescored: "/path/to/CADD/whole_genome_SNVs.tsv.gz"
+  cadd_prescored_index: "/path/to/CADD/whole_genome_SNVs.tsv.gz.tbi"
+  annovar_humandb: "/path/to/annovar/humandb"
+  reference_panel_dir: "/path/to/1kGP_EUR_reference_panel"
+
+parameters:
+  trimmomatic_slidingwindow: "4:20"
+  trimmomatic_minlen: 45
+  bwa_min_score: 0
+  deepvariant_model_type: "WES"
+  glnexus_config: "DeepVariantWES"
+  cadd_knn_k: 5
+  parc_knn: 30
+  parc_jac_std_global: 0.15
+  parc_resolution_parameter: 1
+  parc_random_seed: 43
+  gene_imputation_k: 5
+  min_overlap: 50
+  umap_n_neighbors: 15
+  umap_min_dist: 0.5
+  umap_metric: "cosine"
+  umap_n_epochs: 1500
+  lisi_perplexity: 15
+  kbet_k0: 15
+
+directories:
+  raw_fastq: "/path/to/fastq"
+  input_bam: "/path/to/bam"
+  output_dir: "/path/to/output"
+  temporary_dir: "/path/to/tmp"

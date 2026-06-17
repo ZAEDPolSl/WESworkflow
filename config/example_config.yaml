@@ -1,58 +1,152 @@
 project:
   name: "WESworkflow"
+  # Genome build expected by the workflow.
+  # The current pipeline is configured for GRCh38 / hg38 resources.
   genome_build: "GRCh38"
 
 environment:
+  # Conda environment name recommended for running the workflow.
   conda_env: "wes-env"
+  
+  # Command used to run R scripts in a clean environment.
+  # This avoids accidental use of user-level R libraries.
   r_clean_command: "R_LIBS= R_LIBS_USER= R_LIBS_SITE= R_PROFILE_USER=/dev/null Rscript --vanilla"
 
 tools:
-  deepvariant: "/path/to/deepvariant"
-  glnexus_cli: "/path/to/glnexus_cli"
-  beagle_jar: "/path/to/beagle.5.5.jar"
+  # Docker image used for DeepVariant.
+  # Use the GPU image if parameters.deepvariant_use_gpu is true.
+  # Can be obtained from: https://github.com/google/deepvariant
+  deepvariant_docker_image: "google/deepvariant:1.8.0-gpu"
+
+  # Paths to Beagle-related JAR files used during genotype imputation.
+  # Can be downloaded here: https://faculty.washington.edu/browning/beagle/beagle.html
+  conform_gt_jar: "/path/to/conform-gt.jar"
+  beagle_jar: "/path/to/beagle.jar"
+
+  # Path to the ANNOVAR installation directory.
+  # The workflow expects table_annovar.pl and humandb/ inside this directory.
+  # https://annovar.openbioinformatics.org/en/latest/
   annovar_dir: "/path/to/annovar"
-  table_annovar: "/path/to/annovar/table_annovar.pl"
-  convert2annovar: "/path/to/annovar/convert2annovar.pl"
-  annotate_variation: "/path/to/annovar/annotate_variation.pl"
+
 
 resources:
+  # Reference genome FASTA file in GRCh38/hg38 build.
+  # The file should be indexed for tools that require FASTA indexes.
+  # http://feb2023.archive.ensembl.org/index.html
+  reference_fasta: "/path/to/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+
+  # Adapter FASTA file used by Trimmomatic.
+  # Required only when parameters.trimmomatic_trim_adapters is true.
   trimmomatic_adapters: "/path/to/TruSeq3-PE.fa"
-  reference_fasta: "/path/to/GRCh38.p14.fa"
-  reference_fasta_index: "/path/to/GRCh38.p14.fa.fai"
-  bwa_index_prefix: "/path/to/GRCh38.p14.fa"
-  refseq_bed: "/path/to/refseq_exonic_regions.bed"
+
+  # Chain file used for BAM liftover from GRCh37/hg19 to GRCh38/hg38.  
+  # Download: https://ftp.ensembl.org/pub/assembly_mapping/homo_sapiens/
   liftover_chain: "/path/to/GRCh37_to_GRCh38.chain.gz"
+
+  # BED file with RefSeq exon and splice-region coordinates.
+  # This path is relative to the repository root and can usually be left unchanged as the processed file is provided.
+  refseq_bed: "Data/bed/refGene_exons_splice5.nochr.bed"
+  
+  # Directory with chromosome-specific Beagle genetic maps.
+  # https://faculty.washington.edu/browning/beagle/beagle.html
+  genetic_maps_dir: "/path/to/beagle/genetic_maps"
+
+  # Directory with per-chromsosome reference panel.
+  # This repository-relative example assumes that the EUR reference panel
+  # was put in Data/reference_panel/EUR_nochr. 
+  # Reference panel generated for this workflow is available at:
+  # https://doi.org/10.5281/zenodo.19626919 
+  reference_panel_dir: "Data/reference_panel/EUR_nochr"
+
+  # Pre-scored CADD SNV file (corresponding .tbi index should be present next to it)
+  # Dwonload: https://cadd.bihealth.org/download
   cadd_prescored: "/path/to/CADD/whole_genome_SNVs.tsv.gz"
-  cadd_prescored_index: "/path/to/CADD/whole_genome_SNVs.tsv.gz.tbi"
-  annovar_humandb: "/path/to/annovar/humandb"
-  reference_panel_dir: "/path/to/1kGP_EUR_reference_panel"
+
+
 
 parameters:
+  # In this section, "jobs" refers to externally parallelized processes,
+  # whereas "threads" refers to threads used internally by a given tool.
+
+  # Trimmomatic settings for Data_pre_processing/QC/trimm.sh
+  # Adapter trimming can be disabled by setting trimmomatic_trim_adapters to false.
   trimmomatic_illuminaclip: "2:30:10"
-  trimmomatic_threads: 8
-  fastqc_threads: 24
   trimmomatic_slidingwindow: "4:20"
   trimmomatic_minlen: 45
-  bwa_min_score: 0
-  deepvariant_model_type: "WES"
-  glnexus_config: "DeepVariantWES"
-  cadd_knn_k: 5
-  parc_knn: 30
-  parc_jac_std_global: 0.15
-  parc_resolution_parameter: 1
-  parc_random_seed: 43
-  gene_imputation_k: 5
-  min_overlap: 50
-  umap_n_neighbors: 15
-  umap_min_dist: 0.5
-  umap_metric: "cosine"
-  umap_n_epochs: 1500
-  lisi_perplexity: 15
-  kbet_k0: 15
+  trimmomatic_trim_adapters: true
+  trimmomatic_threads: 8
+  fastqc_threads: 24
+
+  # Data_pre_processing/Liftover/liftover_bams.sh
+  liftover_threads: 24
+
+
+  # Alignment and duplicate-marking settings for Data_pre_processing/Alignment/alignment.sh
+  alignment_threads: 60
+  bwa_min_score: 0 # minimal score of alignment
+  mark_duplicates_jobs: 8
+  # FASTQ filename suffixes expected by the alignment script.
+  fastq_r1_suffix: "_1.fastq"
+  fastq_r2_suffix: "_2.fastq"
+
+  # For Variant_calling/Joint_genotyping/run_GLnexus.sh bcf to vcf convertion
+  bcftools_threads: 40
+
+  # DeepVariant runtime settings for Variant_calling/Calling/run_deepvariant.sh
+  deepvariant_threads: 30
+  deepvariant_use_gpu: true
+
+  # Downstream this step number of parallel is set to 23 allowing to process all the chromosomes separately
+  # Thus, setting this number at any higher number will have no positive effect, this is the total number of inputs
+  
+  # Genotype imputation settings for Variant_post_processing/1_genotype_imputation.sh
+  imputation_parallel_jobs: 23
+  imputation_ad_threshold: 5 # retain only the records, where et least one sample has AD > 5
+  beagle_threads: 10
+
+  # Used in: Variant_post_processing/2_annotation.sh
+  annotation_parallel_jobs: 23
+
+  # Number of parallel jobs used during gene-level feature aggregation in Variant_to_gene/gene_aggregation.sh
+  feature_parallel_jobs: 23
+
+  
 
 directories:
-  trimmed_fastq: "/path/to/trimmed_fastq_files"
+  # Directory with raw paired-end FASTQ files used by the trimming step.
   raw_fastq: "/path/to/fastq"
-  input_bam: "/path/to/bam"
-  output_dir: "/path/to/output"
+  # Output directory for trimmed FASTQ files and FastQC/MultiQC reports.
+  trimmed_fastq: "/path/to/trimmed_fastq_files"
+
+  # Directory with hg19/GRCh37 BAM files used as input for liftover (if performed)
+  hg19_bam: "/path/to/hg19_bam_files"
+  # Output directory for lifted GRCh38 BAM files.
+  lifted_bam: "/path/to/lifted_bam_files"
+
+  # Directory with FASTQ files used by the alignment step.
+  # This can point to trimmed_fastq if alignment should use trimmed reads.
+  alignment_fastq: "/path/to/fastq_files"
+  # Output directory for aligned and duplicate-marked BAM files.
+  bam: "/path/to/aligned_bam_files"
+
+  # Directory with BAM files used as direct DeepVariant input.
+  # For newly aligned samples, this can be the same as directories.bam.
+  # For lifted samples, this can point to directories.lifted_bam.
+  deepvariant_bam: "/path/to/deepvariant_input_bam_files"
+  # depending on workflow, if bams were aligned they will have _marked.bam suffix after duplicate marking
+  # if bam were lifted, they wil have .sorted.bam suffix
+  # it's important to specify it correctly in order to prevent using also unmarked/unsorted files
+  deepvariant_bam_suffix: "_marked.bam"
+  # Output directory for per-sample DeepVariant VCF/gVCF files.
+  deepvariant_output: "/path/to/vcf_files/snv"
+
+  # Parent directory searched recursively for DeepVariant gVCF files (i.e. per-dataset directories with DeepVariant-generated g.vcf files)
+  # This is used by the GLnexus joint genotyping step.
+  gvcf_search_root: "/path/to/general/datasets/parent/directory"
+  # Main output directory for GLnexus and all downstream steps.
+  # The workflow will create subdirectories such as:
+  # Genotyping/, Imputation/, Annotation/, Intermediate/, Features/, Results/.
+  results_dir: "/path/to/results"
+
+   # Directory for temporary and scratch files.
   temporary_dir: "/path/to/tmp"

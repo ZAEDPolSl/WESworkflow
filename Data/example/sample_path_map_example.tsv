@@ -1,4 +1,5 @@
-Sample_ID	Dataset	Source
-TCGA-A2-A0SY-10A	TCGA	TCGA
-SRR25434471	PRJNA851929	SRA
-457	Yale	Yale
+Sample	Dataset	Kit
+sample1	DatasetA	KitA
+sample2	DatasetA	KitA
+sample3	DatasetB	KitB
+sample4	DatasetB	KitB

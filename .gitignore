@@ -22,3 +22,4 @@ Data/reference_panel/
 *.log
 *.tmp
 EOFconfig/local_config.yaml
+example_results/

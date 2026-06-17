@@ -2,9 +2,11 @@
 set -euo pipefail
 
 # Trims paired-end FASTQ files with Trimmomatic, then runs FastQC and MultiQC.
+# Adapter trimming can be enabled or disabled in the YAML config.
 # Usage: bash Data_pre_processing/QC/trimm.sh config/local_config.yaml
 # Required config fields: directories.raw_fastq, directories.trimmed_fastq,
-# resources.trimmomatic_adapters, parameters.trimmomatic_* and parameters.fastqc_threads.
+# parameters.trimmomatic_* and parameters.fastqc_threads.
+# If parameters.trimmomatic_trim_adapters is true, resources.trimmomatic_adapters is also required.
 
 CONFIG="${1:-config/local_config.yaml}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -20,28 +22,53 @@ if [[ ! -f "$CONFIG" ]]; then
 	exit 1
 fi
 
-INPUT_DIR="$(python "$READ_CONFIG" "$CONFIG" directories.raw_fastq)"
-OUTPUT_DIR="$(python "$READ_CONFIG" "$CONFIG" directories.trimmed_fastq)"
+resolve_path() {
+	local path="$1"
+
+	if [[ "$path" == /* ]]; then
+		echo "$path"
+	else
+		echo "$REPO_DIR/$path"
+	fi
+}
+
+INPUT_DIR="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" directories.raw_fastq)")"
+OUTPUT_DIR="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" directories.trimmed_fastq)")"
 FASTQC_DIR="$OUTPUT_DIR/fastqc"
 
 TRIMMO_THREADS="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_threads)"
 FASTQC_THREADS="$(python "$READ_CONFIG" "$CONFIG" parameters.fastqc_threads)"
-ADAPTERS="$(python "$READ_CONFIG" "$CONFIG" resources.trimmomatic_adapters)"
-ILLUMINACLIP="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_illuminaclip)"
+TRIM_ADAPTERS="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_trim_adapters 2>/dev/null || echo true)"
 SLIDINGWINDOW="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_slidingwindow)"
 MINLEN="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_minlen)"
+
+TRIM_ADAPTERS="$(echo "$TRIM_ADAPTERS" | tr '[:upper:]' '[:lower:]')"
 
 if [[ ! -d "$INPUT_DIR" ]]; then
 	echo "ERROR: Input FASTQ directory not found: $INPUT_DIR"
 	exit 1
 fi
 
-if [[ ! -f "$ADAPTERS" ]]; then
-	echo "ERROR: Trimmomatic adapter file not found: $ADAPTERS"
+mkdir -p "$OUTPUT_DIR" "$FASTQC_DIR"
+
+TRIMMOMATIC_STEPS=()
+
+if [[ "$TRIM_ADAPTERS" == "true" ]]; then
+	ADAPTERS="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" resources.trimmomatic_adapters)")"
+	ILLUMINACLIP="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_illuminaclip)"
+
+	if [[ ! -f "$ADAPTERS" ]]; then
+		echo "ERROR: Trimmomatic adapter file not found: $ADAPTERS"
+		exit 1
+	fi
+
+	TRIMMOMATIC_STEPS+=("ILLUMINACLIP:${ADAPTERS}:${ILLUMINACLIP}")
+elif [[ "$TRIM_ADAPTERS" != "false" ]]; then
+	echo "ERROR: parameters.trimmomatic_trim_adapters must be true or false"
 	exit 1
 fi
 
-mkdir -p "$OUTPUT_DIR" "$FASTQC_DIR"
+TRIMMOMATIC_STEPS+=("SLIDINGWINDOW:${SLIDINGWINDOW}" "MINLEN:${MINLEN}")
 
 i=1
 total="$(find "$INPUT_DIR" -name "*_1.fastq.gz" | wc -l)"
@@ -73,8 +100,7 @@ find "$INPUT_DIR" -name "*_1.fastq.gz" | sort | while read -r r1; do
 		"$r1" "$r2" \
 		"$OUTPUT_DIR/${sample}_1.fastq.gz" "$OUTPUT_DIR/${sample}_1_unpaired.fastq.gz" \
 		"$OUTPUT_DIR/${sample}_2.fastq.gz" "$OUTPUT_DIR/${sample}_2_unpaired.fastq.gz" \
-		"ILLUMINACLIP:${ADAPTERS}:${ILLUMINACLIP}" \
-		"SLIDINGWINDOW:${SLIDINGWINDOW}" "MINLEN:${MINLEN}"
+		"${TRIMMOMATIC_STEPS[@]}"
 
 	((i++))
 done

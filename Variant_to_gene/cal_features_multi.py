@@ -23,10 +23,14 @@ import pandas as pd  # Data handling
 import numpy as np   # Numeric operations
 from sklearn.impute import KNNImputer  # For CADD imputation
 import re  # Regex parsing
+from pathlib import Path
 
-
+REPO_DIR = Path(__file__).resolve().parents[1]
 # Path to loss-of-function variants list (gnomAD LoF)
-default_lof_file = 'Data/gnomad_lofs/gnomad.v2.1.1.all_lofs.hg38.txt'
+default_lof_file = REPO_DIR / "Data/gnomad_lofs/gnomad.v2.1.1.all_lofs.hg38.txt"
+
+
+
 
 # Encoding maps for categorical annotations
 variant_type_map = {
@@ -132,11 +136,13 @@ def custom_aggregate(group):
 def load_lof(path):
     """Load LoF variant keys (chrom_pos_ref_alt) into a set."""
     lof_set = set()
+
     with open(path) as f:
         next(f)
         for line in f:
-            cols = line.strip().split('\t')
-            lof_set.add('_'.join(cols[0:4]))
+            cols = line.strip().split("\t")
+            lof_set.add("_".join(cols[0:4]))
+
     return lof_set
 
 
@@ -230,12 +236,22 @@ def parse_args():
     parser.add_argument('--imputed', required=True)
     parser.add_argument('--out_dir', required=True)
     parser.add_argument('--regions', help='Optional region, e.g. chr1 or chr1:1-1000000')
+    parser.add_argument(
+        "--lof_file",
+        default=str(default_lof_file),
+        help="Path to the gnomAD loss-of-function variant list."
+    )
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = parse_args()
-    lof_set = load_lof(default_lof_file)
+
+    lof_file = Path(args.lof_file)
+    if not lof_file.exists():
+        raise FileNotFoundError(f"LoF file not found: {lof_file}")
+
+    lof_set = load_lof(lof_file)
 
     vcf_orig = VCF(args.original, regions=args.region) if args.regions else VCF(args.original)
     vcf_orig.set_threads(4)
