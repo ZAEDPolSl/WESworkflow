@@ -40,15 +40,7 @@ The following external tools are expected to be configured manually:
 - Beagle
 - ANNOVAR
 
-The following external resources are also required:
-
-- GRCh38 reference FASTA and index
-- BWA index
-- RefSeq-derived exonic BED file
-- GRCh37-to-GRCh38 liftover chain file
-- CADD prescored database
-- ANNOVAR humandb directory
-- 1000 Genomes Project reference panel
+External resources are specified in our [external resources guide](docs/external_resources.md)
 
 ## 5. Run the installation check
 
