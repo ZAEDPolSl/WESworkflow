@@ -1,73 +1,132 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# This script performs variant calling on Whole Exome Sequencing BAMs using docker image DeepVariant tool 
-# producing VCF and GVCF files
-#/general/dataset/directory/    <- $WORKDIR
-#├── fastq_files/           
-#├── trimmed_fastq_files/      
-#│   └── fastqc/ 
-#├── bam_files/    
-#├── vcf_files/      
-#│   └── snv/ 
+# This script performs variant calling on WES BAM files using DeepVariant
+# in a Docker container, producing per-sample VCF and GVCF files.
+# Usage: bash Variant_calling/Calling/run_deepvariant.sh config/local_config.yaml
 
-WORKDIR="path/to/dataset/dir"
-INPUT_DIRS="$WORKDIR/bam_files"
-OUTPUT_DIR="$WORKDIR/vcf_files/snv"
+CONFIG="${1:-config/local_config.yaml}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-REFERENCE_DIR="/path/to/the/hg38_reference"
-REFERENCE_FILE="Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+if [[ "$CONFIG" != /* ]]; then
+	CONFIG="$REPO_DIR/$CONFIG"
+fi
 
-# path to the regions of restriction
-REGIONS_DIR="Data/bed"
-REGIONS_FILE="refGene_exons_splice5.nochr.bed"
+READ_CONFIG="$REPO_DIR/scripts/read_config.py"
 
-mkdir -p "$OUTPUT_DIR" "$OUTPUT_DIR/logs"
+resolve_path() {
+	local path="$1"
 
-ERROR_LOG="$OUTPUT_DIR/logs/error.log"
+	if [[ "$path" == /* ]]; then
+		echo "$path"
+	else
+		echo "$REPO_DIR/$path"
+	fi
+}
 
-THREADS=30
+if [[ ! -f "$CONFIG" ]]; then
+	echo "ERROR: Config file not found: $CONFIG"
+	exit 1
+fi
 
-BIN_VERSION="1.8.0"
+BAM_DIR="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" directories.deepvariant_bam)")"
+OUTPUT_DIR="$(python "$READ_CONFIG" "$CONFIG" directories.deepvariant_output)"
+TMPDIR="$(python "$READ_CONFIG" "$CONFIG" directories.temporary_dir)"
 
+REFERENCE_FASTA="$(python "$READ_CONFIG" "$CONFIG" resources.reference_fasta)"
+REGIONS_BED="$(python "$READ_CONFIG" "$CONFIG" resources.refseq_bed)"
 
-# CHECK HOW YOUR BAMS ARE NAMED BECAUSE SCRIPT MATCHES THE SUFFIX
-total=$(find "$INPUT_DIRS" -name "*sorted.bam" | wc -l)
-i=0
+THREADS="$(python "$READ_CONFIG" "$CONFIG" parameters.deepvariant_threads)"
+USE_GPU="$(python "$READ_CONFIG" "$CONFIG" parameters.deepvariant_use_gpu | tr '[:upper:]' '[:lower:]')"
 
-find $INPUT_DIRS -name "*sorted.bam" |
-while IFS= read -r line; do
-    filename=$(basename "$line")
-    sample_name="${filename%sorted.bam}"
-    ((i++))
-    echo "[$i/$total] Processing $sample_name …"
+DOCKER_IMAGE="$(python "$READ_CONFIG" "$CONFIG" tools.deepvariant_docker_image)"
 
-    if [ -f "$OUTPUT_DIR/${sample_name}.vcf.gz" ]; then
-        echo "    → exists, skipping"
-        continue
-    fi
+REFERENCE_FASTA="$(resolve_path "$REFERENCE_FASTA")"
+REGIONS_BED="$(resolve_path "$REGIONS_BED")"
 
-    docker run --rm --gpus 1 \
-    -v "${INPUT_DIRS}":"/input" \
-    -v "${OUTPUT_DIR}":"/output" \
-    -v "${REFERENCE_DIR}":"/reference" \
-    -v "${REGIONS_DIR}":"/regions" \
-    -v /mnt/hot/tmp:/tmp \
-    google/deepvariant:"${BIN_VERSION}-gpu" \
-    /opt/deepvariant/bin/run_deepvariant \
-    --model_type WES \
-    --ref "/reference/$REFERENCE_FILE" \
-    --reads "/input/$filename" \
-    --regions "/regions/$REGIONS_FILE" \
-    --output_vcf "/output/${sample_name}.vcf.gz" \
-    --output_gvcf "/output/${sample_name}.g.vcf.gz" \
-    --logging_dir="/output/logs" \
-    --num_shards "$THREADS" \
-    --intermediate_results_dir "/tmp/dv_${sample_name}" \
-    --sample_name="$sample_name" 
-done 
+REFERENCE_DIR="$(dirname "$REFERENCE_FASTA")"
+REFERENCE_FILE="$(basename "$REFERENCE_FASTA")"
+REGIONS_DIR="$(dirname "$REGIONS_BED")"
+REGIONS_FILE="$(basename "$REGIONS_BED")"
 
+BAM_SUFFIX="_marked.bam"
+MODEL_TYPE="WES"
 
+if [[ ! -d "$INPUT_DIR" ]]; then
+	echo "ERROR: Input BAM directory not found: $INPUT_DIR"
+	exit 1
+fi
 
+if [[ ! -f "$REFERENCE_FASTA" ]]; then
+	echo "ERROR: Reference FASTA not found: $REFERENCE_FASTA"
+	exit 1
+fi
 
+if [[ ! -f "$REGIONS_BED" ]]; then
+	echo "ERROR: Regions BED file not found: $REGIONS_BED"
+	exit 1
+fi
 
+mkdir -p "$OUTPUT_DIR" "$OUTPUT_DIR/logs" "$TMPDIR"
 
+DOCKER_GPU_ARGS=()
+if [[ "$USE_GPU" == "true" ]]; then
+	DOCKER_GPU_ARGS=(--gpus 1)
+fi
+
+total="$(find "$INPUT_DIR" -name "*${BAM_SUFFIX}" | wc -l)"
+
+if [[ "$total" -eq 0 ]]; then
+	echo "ERROR: No BAM files found in $INPUT_DIR using suffix $BAM_SUFFIX"
+	exit 1
+fi
+
+i=1
+failed_samples=()
+
+while IFS= read -r -d '' bam_file; do
+	filename="$(basename "$bam_file")"
+	sample_name="${filename%"$BAM_SUFFIX"}"
+	relative_bam="${bam_file#"$INPUT_DIR"/}"
+
+	echo "[$i/$total] Processing $sample_name"
+
+	if [[ -f "$OUTPUT_DIR/${sample_name}.vcf.gz" ]]; then
+		echo "Skipping $sample_name - VCF exists"
+		((i++))
+		continue
+	fi
+
+	if ! docker run --rm "${DOCKER_GPU_ARGS[@]}" \
+		-v "$INPUT_DIR":"/input" \
+		-v "$OUTPUT_DIR":"/output" \
+		-v "$REFERENCE_DIR":"/reference" \
+		-v "$REGIONS_DIR":"/regions" \
+		-v "$TMPDIR":"/tmp" \
+		"$DOCKER_IMAGE" \
+		/opt/deepvariant/bin/run_deepvariant \
+		--model_type "$MODEL_TYPE" \
+		--ref "/reference/$REFERENCE_FILE" \
+		--reads "/input/$relative_bam" \
+		--regions "/regions/$REGIONS_FILE" \
+		--output_vcf "/output/${sample_name}.vcf.gz" \
+		--output_gvcf "/output/${sample_name}.g.vcf.gz" \
+		--logging_dir "/output/logs" \
+		--num_shards "$THREADS" \
+		--intermediate_results_dir "/tmp/dv_${sample_name}" \
+		--sample_name "$sample_name"; then
+
+		echo "ERROR: DeepVariant failed for sample $sample_name"
+		failed_samples+=("$sample_name")
+	fi
+
+	((i++))
+done < <(find "$INPUT_DIR" -name "*${BAM_SUFFIX}" -print0 | sort -z)
+
+if [[ "${#failed_samples[@]}" -gt 0 ]]; then
+	echo "The following samples failed:"
+	printf '%s\n' "${failed_samples[@]}"
+	exit 1
+fi
+
+echo "DeepVariant completed successfully."

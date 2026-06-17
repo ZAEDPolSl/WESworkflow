@@ -1,59 +1,111 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# This script performs trimming of paired-end FASTQ files using Trimmomatic. 
-# It is to be used only if initial QC does not pass.
-# It also runs FastQC on the trimmed files and generates a MultiQC report in the end.
+# Trims paired-end FASTQ files with Trimmomatic, then runs FastQC and MultiQC.
+# Adapter trimming can be enabled or disabled in the YAML config.
+# Usage: bash Data_pre_processing/QC/trimm.sh config/local_config.yaml
+# Required config fields: directories.raw_fastq, directories.trimmed_fastq,
+# parameters.trimmomatic_* and parameters.fastqc_threads.
+# If parameters.trimmomatic_trim_adapters is true, resources.trimmomatic_adapters is also required.
 
-#/general/dataset/directory/    <- $WORKDIR
-#├── fastq_files/           
-#├── trimmed_fastq_files/      
-#│   └── fastqc/ 
+CONFIG="${1:-config/local_config.yaml}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-TRIMMO_THREADS=8
-FASTQC_THREADS=24
-WORKDIR="path/to/dataset/dir" 
-INPUT_DIR=$WORKDIR/fastq_files
-OUTPUT_DIR=$WORKDIR/trimmed_fastq_files
-FASTQC_DIR=$OUTPUT_DIR/fastqc
+if [[ "$CONFIG" != /* ]]; then
+	CONFIG="$REPO_DIR/$CONFIG"
+fi
 
-mkdir -p $OUTPUT_DIR $FASTQC_DIR
+READ_CONFIG="$REPO_DIR/scripts/read_config.py"
+
+if [[ ! -f "$CONFIG" ]]; then
+	echo "ERROR: Config file not found: $CONFIG"
+	exit 1
+fi
+
+resolve_path() {
+	local path="$1"
+
+	if [[ "$path" == /* ]]; then
+		echo "$path"
+	else
+		echo "$REPO_DIR/$path"
+	fi
+}
+
+INPUT_DIR="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" directories.raw_fastq)")"
+OUTPUT_DIR="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" directories.trimmed_fastq)")"
+FASTQC_DIR="$OUTPUT_DIR/fastqc"
+
+TRIMMO_THREADS="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_threads)"
+FASTQC_THREADS="$(python "$READ_CONFIG" "$CONFIG" parameters.fastqc_threads)"
+TRIM_ADAPTERS="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_trim_adapters 2>/dev/null || echo true)"
+SLIDINGWINDOW="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_slidingwindow)"
+MINLEN="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_minlen)"
+
+TRIM_ADAPTERS="$(echo "$TRIM_ADAPTERS" | tr '[:upper:]' '[:lower:]')"
+
+if [[ ! -d "$INPUT_DIR" ]]; then
+	echo "ERROR: Input FASTQ directory not found: $INPUT_DIR"
+	exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR" "$FASTQC_DIR"
+
+TRIMMOMATIC_STEPS=()
+
+if [[ "$TRIM_ADAPTERS" == "true" ]]; then
+	ADAPTERS="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" resources.trimmomatic_adapters)")"
+	ILLUMINACLIP="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_illuminaclip)"
+
+	if [[ ! -f "$ADAPTERS" ]]; then
+		echo "ERROR: Trimmomatic adapter file not found: $ADAPTERS"
+		exit 1
+	fi
+
+	TRIMMOMATIC_STEPS+=("ILLUMINACLIP:${ADAPTERS}:${ILLUMINACLIP}")
+elif [[ "$TRIM_ADAPTERS" != "false" ]]; then
+	echo "ERROR: parameters.trimmomatic_trim_adapters must be true or false"
+	exit 1
+fi
+
+TRIMMOMATIC_STEPS+=("SLIDINGWINDOW:${SLIDINGWINDOW}" "MINLEN:${MINLEN}")
 
 i=1
-total=$(find "$INPUT_DIR" -name "*_1.fastq.gz" | wc -l) # total samples to process
+total="$(find "$INPUT_DIR" -name "*_1.fastq.gz" | wc -l)"
 
-# ADJUST FILE EXTENSION
-find "$INPUT_DIR" -name "*_1.fastq.gz" | while read -r r1; do
+if [[ "$total" -eq 0 ]]; then
+	echo "ERROR: No *_1.fastq.gz files found in $INPUT_DIR"
+	exit 1
+fi
 
-    sample=$(basename "$r1" _1.fastq.gz)
-    r2="$INPUT_DIR/${sample}_2.fastq.gz"
+find "$INPUT_DIR" -name "*_1.fastq.gz" | sort | while read -r r1; do
+	sample="$(basename "$r1" _1.fastq.gz)"
+	r2="$INPUT_DIR/${sample}_2.fastq.gz"
 
+	if [[ ! -f "$r2" ]]; then
+		echo "WARNING: Missing R2 file for sample $sample: $r2"
+		continue
+	fi
 
-    echo "Processing sample $sample ($i/$total)"
-    # skip if sample processed
-    output_file="$OUTPUT_DIR/${sample}_1.fastq"
-    if [ -f "$output_file" ]; then
-        echo "Skipping $sample – output exists"
-        ((i++))
-        continue
-    fi
+	echo "Processing sample $sample ($i/$total)"
 
-# quality and adapters trimming, adjust if needed
-    trimmomatic PE -threads $TRIMMO_THREADS \
-        "$r1" "$r2" \
-        "$OUTPUT_DIR/${sample}_1.fastq.gz" "$OUTPUT_DIR/${sample}_1_unpaired.fastq.gz" \
-        "$OUTPUT_DIR/${sample}_2.fastq.gz" "$OUTPUT_DIR/${sample}_2_unpaired.fastq.gz" \
-        ILLUMINACLIP:$CONDA_PREFIX/share/trimmomatic-0.40-0/adapters/TruSeq3-PE.fa:2:30:10 \ 
-        SLIDINGWINDOW:4:20 MINLEN:45 
-        
-    ((i++))
+	output_file="$OUTPUT_DIR/${sample}_1.fastq.gz"
+	if [[ -f "$output_file" ]]; then
+		echo "Skipping $sample - output exists"
+		((i++))
+		continue
+	fi
+
+	trimmomatic PE -threads "$TRIMMO_THREADS" \
+		"$r1" "$r2" \
+		"$OUTPUT_DIR/${sample}_1.fastq.gz" "$OUTPUT_DIR/${sample}_1_unpaired.fastq.gz" \
+		"$OUTPUT_DIR/${sample}_2.fastq.gz" "$OUTPUT_DIR/${sample}_2_unpaired.fastq.gz" \
+		"${TRIMMOMATIC_STEPS[@]}"
+
+	((i++))
 done
 
-# run quality check
-fastqc \
-    --threads $FASTQC_THREADS \
-    --outdir "$FASTQC_DIR" \
-    "$OUTPUT_DIR"/*[12].fastq.gz
+fastqc --threads "$FASTQC_THREADS" --outdir "$FASTQC_DIR" "$OUTPUT_DIR"/*[12].fastq.gz
 
-# move to the FastQC output directory and run MultiQC to generate a report
-cd $FASTQC_DIR
+cd "$FASTQC_DIR"
 multiqc .

@@ -1,4 +1,3 @@
-cat > .gitignore <<'EOF'
 # large genomics files
 *.vcf
 *.vcf.gz
@@ -21,4 +20,5 @@ Data/reference_panel/
 # logs/temp
 *.log
 *.tmp
-EOF
+config/local_config.yaml
+example_results/
