@@ -45,11 +45,11 @@ This file contains 1000 Genomes Project sample identifiers and population annota
     column 2: sex
     column 6: superpopulation code
 
-### <u>Users can adjust this part by changing the superpopulation code to one of the codes specified at 1000 Genomes documentation</u>
-
 
 ## 3. Build the European reference panel
 For the benchmark analysis, samples with `EUR` in column 6 were selected. 
+
+### <u>Users can adjust this part by changing the superpopulation code to one of the codes specified at 1000 Genomes documentation</u>
 
 Run:
 
@@ -57,5 +57,7 @@ Run:
         --metadata Data/reference_panel/1KG_30x_hg38/1kg_samples_metadata.tsv \
         --vcf-dir Data/reference_panel/1KG_30x_hg38/VCF \
         --out-dir Data/reference_panel/EUR_nochr \
-        --bref-jar /path/to/bref3.jar \
+        --bref-jar /path/to/bref3.27Feb25.75f.jar \
         --superpopulation EUR
+
+`bref3.27Feb25.75f.jar` is a part of Beagle 5.5 software which can downloaded from [Beagle website](https://faculty.washington.edu/browning/beagle/beagle.html).
