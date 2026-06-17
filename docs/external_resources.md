@@ -137,7 +137,7 @@ The files should be compatible with the genome build used by the reference panel
 
 ## Reference panel
 
-The genotype imputation reference panel used in the benchmark analysis was constructed from the [1000 Genomes Project high-coverage GRCh38](https://www.internationalgenome.org/data-portal/data-collection/1000genomes_30x) VCF files and restricted to individuals of European ancestry. 
+The genotype imputation reference panel used in the benchmark analysis was constructed from the [1000 Genomes Project high-coverage GRCh38](https://www.internationalgenome.org/data-portal/data-collection/1000genomes_30x) VCF files and restricted to individuals of European ancestry. However, users can adjust the workflow to any ancestry available within the reference cohort by following the `docs/reference_panel.md` tutorial.
 
 Due to file size, the prepared European reference panel used in this workflow is provided separately through Zenodo repository under the accession number [19626919](https://doi.org/10.5281/zenodo.19626919).
 
