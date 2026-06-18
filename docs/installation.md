@@ -40,7 +40,7 @@ The following external tools are expected to be configured manually:
 - Beagle
 - ANNOVAR
 
-External resources are specified in our [**external resources guide**](docs/external_resources.md)
+External resources are specified in our [**external resources guide**](external_resources.md)
 
 ## 5. Run the installation check
 
