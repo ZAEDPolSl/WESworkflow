@@ -10,6 +10,7 @@ dependencies:
   - trimmomatic=0.39
   - bwa=0.7.17
   - samtools=1.19.2
+  - glnexus=1.4.1
   - bcftools
   - htslib
   - bedtools

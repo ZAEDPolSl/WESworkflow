@@ -1,0 +1,8 @@
+original_bams/
+fastq/
+tmp/
+output/
+*.bam
+*.bai
+*.fastq
+*.fastq.gz

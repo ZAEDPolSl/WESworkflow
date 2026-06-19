@@ -36,7 +36,6 @@ Edit config/local_config.yaml and replace all /path/to/... placeholders with loc
 The following external tools are expected to be configured manually:
 
 - DeepVariant
-- GLnexus
 - Beagle
 - ANNOVAR
 
@@ -46,11 +45,15 @@ External resources are specified in our [**external resources guide**](external_
 
 After editing the local configuration file, run:
 
-    bash scripts/check_installation.sh config/local_config.yaml
+```bash
+bash scripts/check_installation.sh config/local_config.yaml
+```
 
 For the example configuration file, the script will report warnings for placeholder paths:
 
-    bash scripts/check_installation.sh config/example_config.yaml
+```bash
+bash scripts/check_installation.sh config/example_config.yaml
+```
 
 These warnings are expected and indicate that the user has not yet provided local paths.
 
@@ -62,4 +65,4 @@ The installation check verifies:
 - YAML configuration syntax
 - existence of configured external tools, files, and directories
 
-This check is intended as a lightweight dry run of the installation. It does not perform full WES processing.
+This check is intended as a lightweight dry run of the installation.

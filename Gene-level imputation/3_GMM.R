@@ -19,7 +19,6 @@ suppressPackageStartupMessages({
 	library(dpGMM)
 })
 
-# Imputation parameters can be adjusted without changing the workflow structure.
 threshold_label_y <- 15
 threshold_digits <- 3
 
@@ -31,12 +30,15 @@ get_script_path <- function() {
 		stop("Cannot determine script path.")
 	}
 
-	normalizePath(sub("^--file=", "", file_arg[1]))
+	script_path <- sub("^--file=", "", file_arg[1])
+	script_path <- gsub("~\\+~", " ", script_path)
+
+	normalizePath(script_path, mustWork = TRUE)
 }
 
 script_path <- get_script_path()
 script_dir <- dirname(script_path)
-repo_dir <- normalizePath(file.path(script_dir, ".."))
+repo_dir <- normalizePath(file.path(script_dir, ".."), mustWork = TRUE)
 
 args <- commandArgs(trailingOnly = TRUE)
 config <- if (length(args) >= 1) args[1] else "config/local_config.yaml"
@@ -45,15 +47,31 @@ if (!grepl("^/", config)) {
 	config <- file.path(repo_dir, config)
 }
 
+config <- normalizePath(config, mustWork = TRUE)
+
 read_config <- function(key) {
-	system2(
+	value <- system2(
 		"python",
 		args = c(file.path(repo_dir, "scripts/read_config.py"), config, key),
 		stdout = TRUE
 	)
+
+	if (!is.null(attr(value, "status"))) {
+		stop(paste("Failed to read config key:", key))
+	}
+
+	if (length(value) == 0 || is.na(value[1]) || value[1] == "") {
+		stop(paste("Empty config value for key:", key))
+	}
+
+	value[1]
 }
 
 resolve_path <- function(path) {
+	if (length(path) == 0 || is.na(path) || path == "") {
+		stop("Cannot resolve an empty path.")
+	}
+
 	if (grepl("^/", path)) {
 		return(path)
 	}
@@ -63,7 +81,7 @@ resolve_path <- function(path) {
 
 results_dir <- resolve_path(read_config("directories.results_dir"))
 
-output_dir <- file.path(results_dir, "Results")
+output_dir <- file.path(results_dir, "Gene_level_imputation")
 figures_dir <- file.path(output_dir, "Figures")
 
 features_file <- file.path(output_dir, "raw_ft_long.tsv")
@@ -158,3 +176,4 @@ print(p)
 dev.off()
 
 cat("Detection-rate GMM completed.\n")
+

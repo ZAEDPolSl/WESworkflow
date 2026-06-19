@@ -45,6 +45,44 @@ if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
 	.libPaths(conda_lib)
 }
 
+# ======== ! SELECT IMPUTATION THERSHOLDS BASED ON GMM RESULTS ! ===========
+# Detection-rate thresholds used for MNAR flagging.
+# A gene is considered under-detected in a group when its detection rate
+# in that group is <= threshold_low_value, while its detection rate in
+# another sufficiently large group is >= threshold_high_value.
+# currently set thresholds are adjusted to example run
+threshold_low_value <- 0.44
+threshold_high_value <- 0.85
+
+# ================== these parameters can be adjusted ================
+
+knn_k <- 10 # objective number of nearest neighbors
+knn_min_k <- 5 # minimal number of nearest neighbors to impute missing value
+min_other_group_size <- 15 # minimal size of group with high detection rate to claim MNAR
+
+# ======== these should be consistent across previous steps ==========
+# UMAP parameters 
+plot_title <- "Data after genotype imputation"
+umap_params <- list(
+	n_neighbors = 15,
+	min_dist = 0.5,
+	metric = "cosine",
+	n_epochs = 1500,
+	nn_method = "nndescent",
+	seed = 123
+)
+# Batch metric parameters
+batch_metric_params <- list(
+	lisi_perplexity = 30,
+	k_kBET = 15,
+	test_size_fraction_kBET = 0.1,
+	heuristic_kBET = FALSE,
+	adapt_kBET = FALSE,
+	PCA_kBET = TRUE
+)
+# ===========================================================
+
+
 suppressPackageStartupMessages({
 	library(data.table)
 	library(ggplot2)
@@ -56,27 +94,6 @@ suppressPackageStartupMessages({
 	library(uwot)
 })
 
-# Analysis parameters
-# These values can be adjusted without changing the workflow structure.
-metadata_file_rel <- "Data/example/sample_path_map_example.tsv"
-
-threshold_low_index <- 3
-threshold_high_index <- 6
-
-knn_k <- 10
-knn_min_k <- 5
-min_other_group_size <- 15
-future_workers <- 48
-future_max_size_gb <- 4
-
-umap_params <- list(
-	n_neighbors = 15,
-	min_dist = 0.5,
-	metric = "cosine",
-	n_epochs = 1500,
-	nn_method = "nndescent",
-	seed = 123
-)
 
 get_script_path <- function() {
 	args <- commandArgs(trailingOnly = FALSE)
@@ -86,12 +103,15 @@ get_script_path <- function() {
 		stop("Cannot determine script path.")
 	}
 
-	normalizePath(sub("^--file=", "", file_arg[1]))
+	script_path <- sub("^--file=", "", file_arg[1])
+	script_path <- gsub("~\\+~", " ", script_path)
+
+	normalizePath(script_path, mustWork = TRUE)
 }
 
 script_path <- get_script_path()
 script_dir <- dirname(script_path)
-repo_dir <- normalizePath(file.path(script_dir, ".."))
+repo_dir <- normalizePath(file.path(script_dir, ".."), mustWork = TRUE)
 
 args <- commandArgs(trailingOnly = TRUE)
 config <- if (length(args) >= 1) args[1] else "config/local_config.yaml"
@@ -100,15 +120,31 @@ if (!grepl("^/", config)) {
 	config <- file.path(repo_dir, config)
 }
 
+config <- normalizePath(config, mustWork = TRUE)
+
 read_config <- function(key) {
-	system2(
+	value <- system2(
 		"python",
 		args = c(file.path(repo_dir, "scripts/read_config.py"), config, key),
 		stdout = TRUE
 	)
+
+	if (!is.null(attr(value, "status"))) {
+		stop(paste("Failed to read config key:", key))
+	}
+
+	if (length(value) == 0 || is.na(value[1]) || value[1] == "") {
+		stop(paste("Empty config value for key:", key))
+	}
+
+	value[1]
 }
 
 resolve_path <- function(path) {
+	if (length(path) == 0 || is.na(path) || path == "") {
+		stop("Cannot resolve an empty path.")
+	}
+
 	if (grepl("^/", path)) {
 		return(path)
 	}
@@ -117,19 +153,29 @@ resolve_path <- function(path) {
 }
 
 dir <- resolve_path(read_config("directories.results_dir"))
-results_dir <- file.path(dir, "Results")
+results_dir <- file.path(dir, "Gene_level_imputation")
 figures_dir <- file.path(results_dir, "Figures")
-metadata_file <- resolve_path(metadata_file_rel)
+metadata_file <- resolve_path(read_config("directories.sample_metadata"))
+future_workers <- as.integer(read_config("parameters.feature_imputation_workers"))
+future_max_size_gb <- as.numeric(read_config("parameters.feature_imputation_future_max_size_gb"))
 
 dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
 
 ft_file <- file.path(results_dir, "raw_ft_long.tsv")
 clusters_file <- file.path(results_dir, "sample_kit_cluster_map.tsv")
-gmm_file <- file.path(results_dir, "GMM_det_rate.RDS")
+
 
 knn_function_file <- file.path(script_dir, "functions", "knn_impute_cosine_parallel.R")
 batch_metrics_file <- file.path(script_dir, "functions", "batch_metrics.R")
+
+if (is.na(future_workers) || future_workers < 1) {
+	stop("parameters.feature_imputation_workers must be a positive integer.")
+}
+
+if (is.na(future_max_size_gb) || future_max_size_gb <= 0) {
+	stop("parameters.feature_imputation_future_max_size_gb must be a positive number.")
+}
 
 if (!file.exists(ft_file)) {
 	stop("Long-format feature table not found: ", ft_file)
@@ -139,9 +185,6 @@ if (!file.exists(clusters_file)) {
 	stop("Sample-to-cluster mapping not found: ", clusters_file)
 }
 
-if (!file.exists(gmm_file)) {
-	stop("GMM model file not found: ", gmm_file)
-}
 
 if (!file.exists(metadata_file)) {
 	stop("Metadata file not found: ", metadata_file)
@@ -182,17 +225,16 @@ if (nrow(ft) == 0) {
 	stop("No feature records matched cluster assignments.")
 }
 
-gmm <- readRDS(gmm_file)
-thresholds <- gmm$threshold
+# Use manually defined detection-rate thresholds.
+a_params <- threshold_low_value # low detection in group
+b_params <- threshold_high_value # high detection in some other sufficiently large group
 
-if (length(thresholds) < max(threshold_low_index, threshold_high_index)) {
-	stop("GMM threshold vector is shorter than requested threshold indices.")
-}
-
-a_params <- thresholds[threshold_low_index] # low detection in group
-b_params <- thresholds[threshold_high_index] # high detection in some other group
 k <- knn_k
 min_n <- min_other_group_size
+
+cat("Using detection-rate thresholds:\n")
+cat("  low detection threshold a =", a_params, "\n")
+cat("  high detection threshold b =", b_params, "\n")
 
 fname_base <- function(a, b, k, prefix = "ft_imp", digits = 2) {
 	fmt <- function(x) sprintf(paste0("%.", digits, "f"), x) # keeps "0.10"
@@ -356,9 +398,18 @@ for (a in a_params) {
 		# batch metrics
 		cat("Computing batch metrics...\n")
 
+		batch_metric_test_size <- batch_metric_params$test_size_fraction *
+			length(unique(df_long$Sample))
+
 		batch_stats <- compute_batch_metrics_df(
 			df_long %>%
-				select(Sample, Dataset, Gene, CADD_weighted_avg_AF)
+				select(Sample, Dataset, Gene, CADD_weighted_avg_AF),
+			lisi_perplexity = batch_metric_params$lisi_perplexity,
+			k_kBET = batch_metric_params$k_kBET,
+			test_size = batch_metric_test_size,
+			heuristic_kBET = batch_metric_params$heuristic_kBET,
+			adapt_kBET = batch_metric_params$adapt_kBET,
+			PCA_kBET = batch_metric_params$PCA_kBET
 		)
 
 		cat(paste("LISI:", batch_stats$lisi_stats$mean, "\n"))
@@ -425,7 +476,7 @@ for (a in a_params) {
 				y = "UMAP 2",
 				caption = umap_caption
 			) +
-			scale_color_hue()
+			scale_color_hue() + coord_equal()
 
 		print(umap_plot)
 
@@ -447,7 +498,7 @@ for (a in a_params) {
 				caption = umap_caption,
 				color = "Cluster"
 			) +
-			scale_color_hue()
+			scale_color_hue() + coord_equal()
 
 		print(umap_plot2)
 

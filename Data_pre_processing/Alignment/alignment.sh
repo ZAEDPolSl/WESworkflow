@@ -98,20 +98,16 @@ if [[ "${#failed_samples[@]}" -gt 0 ]]; then
 else
 	echo "ALIGNMENT COMPLETED SUCCESSFULLY"
 fi
-
 echo "STARTED DUPLICATE MARKING"
 
 mark_duplicates() {
 	local bam_file="$1"
-	local output_bam
-	local metrics_file
-
-	output_bam="${bam_file%.bam}_marked.bam"
-	metrics_file="${bam_file%.bam}_metrics.txt"
+	local output_bam="${bam_file%.bam}_marked.bam"
+	local metrics_file="${bam_file%.bam}_metrics.txt"
 
 	if [[ -e "$output_bam" || "$bam_file" == *_marked.bam ]]; then
 		echo "Skipping $bam_file"
-		return
+		return 0
 	fi
 
 	echo "Marking duplicates in $bam_file"
@@ -122,10 +118,10 @@ mark_duplicates() {
 		--METRICS_FILE "$metrics_file" \
 		--CREATE_INDEX true \
 		--VALIDATION_STRINGENCY "$VALIDATION_STRINGENCY" \
-		--TMP_DIR "$TMPDIR"; then
-
-		echo "ERROR: Duplicate marking failed for $bam_file"
-		return
+		--TMP_DIR "$TMPDIR" \
+		</dev/null; then
+		echo "ERROR: Duplicate marking failed for $bam_file" >&2
+		return 1
 	fi
 
 	echo "Successfully processed $bam_file"
@@ -135,13 +131,14 @@ active_jobs=0
 
 for bam_file in "$OUTPUT_DIR"/*.bam; do
 	[[ -e "$bam_file" ]] || continue
+	[[ "$bam_file" == *_marked.bam ]] && continue
 
 	mark_duplicates "$bam_file" &
-	((active_jobs++))
+	active_jobs=$((active_jobs + 1))
 
 	if [[ "$active_jobs" -ge "$MAX_JOBS" ]]; then
 		wait -n
-		((active_jobs--))
+		active_jobs=$((active_jobs - 1))
 	fi
 done
 

@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Trims paired-end FASTQ files with Trimmomatic, then runs FastQC and MultiQC.
-# Adapter trimming can be enabled or disabled in the YAML config.
-# Usage: bash Data_pre_processing/QC/trimm.sh config/local_config.yaml
-# Required config fields: directories.raw_fastq, directories.trimmed_fastq,
-# parameters.trimmomatic_* and parameters.fastqc_threads.
-# If parameters.trimmomatic_trim_adapters is true, resources.trimmomatic_adapters is also required.
-
 CONFIG="${1:-config/local_config.yaml}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
@@ -18,7 +11,7 @@ fi
 READ_CONFIG="$REPO_DIR/scripts/read_config.py"
 
 if [[ ! -f "$CONFIG" ]]; then
-	echo "ERROR: Config file not found: $CONFIG"
+	echo "ERROR: Config file not found: $CONFIG" >&2
 	exit 1
 fi
 
@@ -39,13 +32,15 @@ FASTQC_DIR="$OUTPUT_DIR/fastqc"
 TRIMMO_THREADS="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_threads)"
 FASTQC_THREADS="$(python "$READ_CONFIG" "$CONFIG" parameters.fastqc_threads)"
 TRIM_ADAPTERS="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_trim_adapters 2>/dev/null || echo true)"
+ADAPTER_FILE="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_adapter_file 2>/dev/null || echo TruSeq3-PE.fa)"
+ILLUMINACLIP="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_illuminaclip)"
 SLIDINGWINDOW="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_slidingwindow)"
 MINLEN="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_minlen)"
 
 TRIM_ADAPTERS="$(echo "$TRIM_ADAPTERS" | tr '[:upper:]' '[:lower:]')"
 
 if [[ ! -d "$INPUT_DIR" ]]; then
-	echo "ERROR: Input FASTQ directory not found: $INPUT_DIR"
+	echo "ERROR: Input FASTQ directory not found: $INPUT_DIR" >&2
 	exit 1
 fi
 
@@ -54,17 +49,22 @@ mkdir -p "$OUTPUT_DIR" "$FASTQC_DIR"
 TRIMMOMATIC_STEPS=()
 
 if [[ "$TRIM_ADAPTERS" == "true" ]]; then
-	ADAPTERS="$(resolve_path "$(python "$READ_CONFIG" "$CONFIG" resources.trimmomatic_adapters)")"
-	ILLUMINACLIP="$(python "$READ_CONFIG" "$CONFIG" parameters.trimmomatic_illuminaclip)"
-
-	if [[ ! -f "$ADAPTERS" ]]; then
-		echo "ERROR: Trimmomatic adapter file not found: $ADAPTERS"
+	if [[ -z "${CONDA_PREFIX:-}" ]]; then
+		echo "ERROR: CONDA_PREFIX is not set. Activate the Conda environment first." >&2
 		exit 1
 	fi
 
-	TRIMMOMATIC_STEPS+=("ILLUMINACLIP:${ADAPTERS}:${ILLUMINACLIP}")
+	ADAPTER_PATH="$CONDA_PREFIX/share/trimmomatic/adapters/$ADAPTER_FILE"
+
+	if [[ ! -f "$ADAPTER_PATH" ]]; then
+		echo "ERROR: Adapter file not found: $ADAPTER_PATH" >&2
+		echo "Check Trimmomatic installation or parameters.trimmomatic_adapter_file." >&2
+		exit 1
+	fi
+
+	TRIMMOMATIC_STEPS+=("ILLUMINACLIP:${ADAPTER_PATH}:${ILLUMINACLIP}")
 elif [[ "$TRIM_ADAPTERS" != "false" ]]; then
-	echo "ERROR: parameters.trimmomatic_trim_adapters must be true or false"
+	echo "ERROR: parameters.trimmomatic_trim_adapters must be true or false" >&2
 	exit 1
 fi
 
@@ -74,7 +74,7 @@ i=1
 total="$(find "$INPUT_DIR" -name "*_1.fastq.gz" | wc -l)"
 
 if [[ "$total" -eq 0 ]]; then
-	echo "ERROR: No *_1.fastq.gz files found in $INPUT_DIR"
+	echo "ERROR: No *_1.fastq.gz files found in $INPUT_DIR" >&2
 	exit 1
 fi
 
@@ -83,14 +83,13 @@ find "$INPUT_DIR" -name "*_1.fastq.gz" | sort | while read -r r1; do
 	r2="$INPUT_DIR/${sample}_2.fastq.gz"
 
 	if [[ ! -f "$r2" ]]; then
-		echo "WARNING: Missing R2 file for sample $sample: $r2"
+		echo "WARNING: Missing R2 file for sample $sample: $r2" >&2
 		continue
 	fi
 
 	echo "Processing sample $sample ($i/$total)"
 
-	output_file="$OUTPUT_DIR/${sample}_1.fastq.gz"
-	if [[ -f "$output_file" ]]; then
+	if [[ -f "$OUTPUT_DIR/${sample}_1.fastq.gz" && -f "$OUTPUT_DIR/${sample}_2.fastq.gz" ]]; then
 		echo "Skipping $sample - output exists"
 		((i++))
 		continue

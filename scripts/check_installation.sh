@@ -1,17 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG="${1:-config/example_config.yaml}"
+CONFIG="${1:-config/local_config.yaml}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -f "$SCRIPT_DIR/scripts/read_config.py" ]]; then
+	REPO_DIR="$SCRIPT_DIR"
+elif [[ -f "$SCRIPT_DIR/../scripts/read_config.py" ]]; then
+	REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+else
+	REPO_DIR="$(pwd)"
+fi
+
+READ_CONFIG="$REPO_DIR/scripts/read_config.py"
+
+if [[ "$CONFIG" != /* ]]; then
+	CONFIG="$REPO_DIR/$CONFIG"
+fi
 
 if [[ ! -f "$CONFIG" ]]; then
-	echo "ERROR: Config file not found: $CONFIG"
+	echo "ERROR: User config file not found: $CONFIG"
+	echo "Create it with: cp config/example_config.yaml config/local_config.yaml"
 	exit 1
 fi
 
-echo "Checking command-line tools..."
+if [[ ! -f "$READ_CONFIG" ]]; then
+	echo "ERROR: read_config.py not found: $READ_CONFIG"
+	exit 1
+fi
+
+resolve_path() {
+	local path="$1"
+
+	if [[ "$path" == /* ]]; then
+		echo "$path"
+	else
+		echo "$REPO_DIR/$path"
+	fi
+}
+
+read_cfg() {
+	python "$READ_CONFIG" "$CONFIG" "$1"
+}
 
 check_cmd() {
 	local cmd="$1"
+
 	if command -v "$cmd" >/dev/null 2>&1; then
 		echo "OK: $cmd"
 	else
@@ -20,7 +54,51 @@ check_cmd() {
 	fi
 }
 
-for cmd in fastqc multiqc trimmomatic bwa samtools bcftools bedtools picard CrossMap perl python Rscript; do
+check_file_from_config() {
+	local key="$1"
+	local path
+
+	path="$(read_cfg "$key")"
+
+	if [[ "$path" == /path/to* || -z "$path" || "$path" == "None" ]]; then
+		echo "WARNING: Placeholder or empty config value: $key = $path"
+		return 0
+	fi
+
+	path="$(resolve_path "$path")"
+
+	if [[ -f "$path" ]]; then
+		echo "OK: $key = $path"
+	else
+		echo "ERROR: Missing file configured in $key: $path"
+		exit 1
+	fi
+}
+
+check_dir_from_config() {
+	local key="$1"
+	local path
+
+	path="$(read_cfg "$key")"
+
+	if [[ "$path" == /path/to* || -z "$path" || "$path" == "None" ]]; then
+		echo "WARNING: Placeholder or empty config value: $key = $path"
+		return 0
+	fi
+
+	path="$(resolve_path "$path")"
+
+	if [[ -d "$path" ]]; then
+		echo "OK: $key = $path"
+	else
+		echo "ERROR: Missing directory configured in $key: $path"
+		exit 1
+	fi
+}
+
+echo "Checking command-line tools..."
+
+for cmd in fastqc multiqc trimmomatic bwa samtools bcftools bedtools bgzip tabix picard CrossMap perl python Rscript java docker parallel glnexus_cli; do
 	check_cmd "$cmd"
 done
 
@@ -30,7 +108,7 @@ echo "Checking Python packages..."
 python - <<'PY'
 import importlib.util
 
-packages = ["argparse", "re", "numpy", "pandas", "sklearn", "cyvcf2", "parc", "yaml"]
+packages = ["numpy", "pandas", "sklearn", "cyvcf2", "parc", "yaml"]
 missing = [pkg for pkg in packages if importlib.util.find_spec(pkg) is None]
 
 if missing:
@@ -78,64 +156,6 @@ if missing:
 	raise SystemExit("ERROR: Missing config sections: " + ", ".join(missing))
 
 print("OK: YAML config syntax")
-PY
-
-echo
-echo "Checking external paths from config..."
-
-python - "$CONFIG" <<'PY'
-import os
-import sys
-import yaml
-
-config_path = sys.argv[1]
-
-with open(config_path) as f:
-	config = yaml.safe_load(f)
-
-def flatten(d, prefix=""):
-	out = {}
-	for k, v in d.items():
-		key = f"{prefix}.{k}" if prefix else k
-		if isinstance(v, dict):
-			out.update(flatten(v, key))
-		else:
-			out[key] = v
-	return out
-
-paths = flatten({k: config.get(k, {}) for k in ["tools", "resources", "directories"]})
-errors = []
-warnings = []
-
-dir_keys = (
-	"annovar_dir", "annovar_humandb", "reference_panel_dir",
-	"raw_fastq", "input_bam", "output_dir", "temporary_dir"
-)
-
-for key, path in paths.items():
-	if not isinstance(path, str):
-		continue
-
-	if path.startswith("/path/to"):
-		warnings.append((key, path))
-		continue
-
-	if key.endswith(dir_keys):
-		if not os.path.isdir(path):
-			errors.append((key, path))
-	else:
-		if not os.path.exists(path):
-			errors.append((key, path))
-
-for key, path in warnings:
-	print(f"WARNING: Placeholder path not configured: {key} = {path}")
-
-if errors:
-	for key, path in errors:
-		print(f"ERROR: Missing path: {key} = {path}")
-	raise SystemExit(1)
-
-print("OK: External paths checked")
 PY
 
 echo

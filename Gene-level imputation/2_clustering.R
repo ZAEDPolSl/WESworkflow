@@ -13,18 +13,32 @@ if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
 	.libPaths(conda_lib)
 }
 
+# ============== Clustering parameters can be adjusted ==============
+parc_params <- list(
+	knn = 30,
+	resolution = 1
+)
+# ===================================================================
+
+
 suppressPackageStartupMessages({
 	library(data.table)
 	library(ggplot2)
 	library(colorspace)
 	library(reticulate)
 })
+python_bin <- Sys.which("python")
 
-# Clustering parameters can be adjusted.
-parc_params <- list(
-	knn = 30,
-	resolution = 1
-)
+if (python_bin == "") {
+	stop("Python executable was not found in the current environment.")
+}
+
+reticulate::use_python(python_bin, required = TRUE)
+
+cat("Using Python for reticulate:", python_bin, "\n")
+cat("Reticulate Python configuration:\n")
+print(reticulate::py_config())
+
 
 get_script_path <- function() {
 	args <- commandArgs(trailingOnly = FALSE)
@@ -34,12 +48,15 @@ get_script_path <- function() {
 		stop("Cannot determine script path.")
 	}
 
-	normalizePath(sub("^--file=", "", file_arg[1]))
+	script_path <- sub("^--file=", "", file_arg[1])
+	script_path <- gsub("~\\+~", " ", script_path)
+
+	normalizePath(script_path, mustWork = TRUE)
 }
 
 script_path <- get_script_path()
 script_dir <- dirname(script_path)
-repo_dir <- normalizePath(file.path(script_dir, ".."))
+repo_dir <- normalizePath(file.path(script_dir, ".."), mustWork = TRUE)
 
 args <- commandArgs(trailingOnly = TRUE)
 config <- if (length(args) >= 1) args[1] else "config/local_config.yaml"
@@ -48,15 +65,31 @@ if (!grepl("^/", config)) {
 	config <- file.path(repo_dir, config)
 }
 
+config <- normalizePath(config, mustWork = TRUE)
+
 read_config <- function(key) {
-	system2(
+	value <- system2(
 		"python",
 		args = c(file.path(repo_dir, "scripts/read_config.py"), config, key),
 		stdout = TRUE
 	)
+
+	if (!is.null(attr(value, "status"))) {
+		stop(paste("Failed to read config key:", key))
+	}
+
+	if (length(value) == 0 || is.na(value[1]) || value[1] == "") {
+		stop(paste("Empty config value for key:", key))
+	}
+
+	value[1]
 }
 
 resolve_path <- function(path) {
+	if (length(path) == 0 || is.na(path) || path == "") {
+		stop("Cannot resolve an empty path.")
+	}
+
 	if (grepl("^/", path)) {
 		return(path)
 	}
@@ -65,7 +98,7 @@ resolve_path <- function(path) {
 }
 
 results_dir <- resolve_path(read_config("directories.results_dir"))
-output_dir <- file.path(results_dir, "Results")
+output_dir <- file.path(results_dir, "Gene_level_imputation")
 figures_dir <- file.path(output_dir, "Figures")
 
 umap_file <- file.path(output_dir, "raw_umap_result.tsv")
@@ -93,7 +126,21 @@ if (!"Sample" %in% colnames(umap_result)) {
 	stop("Column 'Sample' not found in UMAP file.")
 }
 
+n_samples <- nrow(umap_result)
+
+if (n_samples <= parc_params$knn) {
+	stop(
+		"Number of samples must be greater than parc_params$knn. ",
+		"Current number of samples: ", n_samples,
+		"; current knn: ", parc_params$knn,
+		". Use the artificial downstream example dataset or reduce parc_params$knn."
+	)
+}
+
+parc_knn <- parc_params$knn
+
 source_python(parc_script)
+
 
 run_parc <- function(long_tsv, knn, resolution, umap_dt) {
 	cat("Running PARC with k=", knn, ", resolution=", resolution, "\n", sep = "")
@@ -128,19 +175,19 @@ run_parc <- function(long_tsv, knn, resolution, umap_dt) {
 			x = "UMAP 1",
 			y = "UMAP 2"
 		) +
-		scale_color_discrete_qualitative(palette = "Dark3")
+		scale_color_discrete_qualitative(palette = "Dark3") + coord_equal()
 
 	list(plot = p, data = umap_parc)
 }
 
 parc <- run_parc(
 	long_tsv = long_tsv,
-	knn = parc_params$knn,
+	knn = parc_knn,
 	resolution = parc_params$resolution,
 	umap_dt = umap_result
 )
 
-output_tag <- paste0("k", parc_params$knn, "r", parc_params$resolution)
+output_tag <- paste0("k", parc_knn, "r", parc_params$resolution)
 
 fwrite(
 	parc$data,

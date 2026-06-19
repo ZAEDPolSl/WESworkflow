@@ -146,11 +146,11 @@ def load_lof(path):
     return lof_set
 
 
-def process_sample(sample, orig_path, imp_ds, variant_info, out_dir):
+def process_sample(sample, orig_path, imp_ds, variant_info, out_dir, regions=None):
     """Process one sample: extract AF, CADD, aggregate and write features."""
 
 
-    vcf_orig = VCF(args.original, regions=args.regions) if args.regions else VCF(args.original)
+    vcf_orig = VCF(orig_path, regions=regions) if regions else VCF(orig_path)
     vcf_orig.set_threads(4)  # adjust to cores
     
     idx = vcf_orig.samples.index(sample)
@@ -158,7 +158,7 @@ def process_sample(sample, orig_path, imp_ds, variant_info, out_dir):
         # Define output path and header for feature file
     sample_out = f"{out_dir}/{sample}.feature.txt"
     header = (
-    "Gene\tCADD_weighted_avg_AF\tavg_CADD_PHRED\tmax_CADD_PHRED\t"
+    "Gene\tCADD_weighted_avg_AF\tavg_AF\tavg_CADD_PHRED\tmax_CADD_PHRED\t"
     "sum_CADD_PHRED\tHFI\tLoH\n"
 )
     
@@ -219,7 +219,7 @@ def process_sample(sample, orig_path, imp_ds, variant_info, out_dir):
 
     # Aggregate features per gene
     result = df.groupby('Gene', group_keys=False).apply(
-    lambda g: custom_aggregate(g.drop(columns='Gene'))
+    lambda g: custom_aggregate(g.drop(columns='Gene', errors='ignore'))
     ).reset_index()
 
 
@@ -233,7 +233,7 @@ def process_sample(sample, orig_path, imp_ds, variant_info, out_dir):
 def parse_args():
     parser = argparse.ArgumentParser(description='Compute per-sample gene features')
     parser.add_argument('--original', required=True)
-    parser.add_argument('--imputed', required=True)
+    parser.add_argument('--imputed', required=False, default=None)
     parser.add_argument('--out_dir', required=True)
     parser.add_argument('--regions', help='Optional region, e.g. chr1 or chr1:1-1000000')
     parser.add_argument(
@@ -253,19 +253,22 @@ if __name__ == "__main__":
 
     lof_set = load_lof(lof_file)
 
-    vcf_orig = VCF(args.original, regions=args.region) if args.regions else VCF(args.original)
+    vcf_orig = VCF(args.original, regions=args.regions) if args.regions else VCF(args.original)
     vcf_orig.set_threads(4)
-    
-    vcf_imp = VCF(args.imputed, regions=args.region) if args.regions else VCF(args.imputed)
-    vcf_imp.set_threads(4)
 
     # Preload DS for all variants into a dictionary
     imp_ds = {}
-    for iv in vcf_imp:
-        key = f"{iv.CHROM}_{iv.POS}_{iv.REF}_{iv.ALT[0]}"
-        imp_ds[key] = iv.format('DS')
 
-    # Collect annotations from INFO
+    if args.imputed is not None:
+        vcf_imp = VCF(args.imputed, regions=args.regions) if args.regions else VCF(args.imputed)
+        vcf_imp.set_threads(4)
+
+        for iv in vcf_imp:
+            key = f"{iv.CHROM}_{iv.POS}_{iv.REF}_{iv.ALT[0]}"
+            imp_ds[key] = iv.format('DS')
+
+        vcf_imp.close()
+
 
     # Collect annotations from INFO
     variant_info = {}
@@ -321,7 +324,7 @@ if __name__ == "__main__":
 
     # Process each sample
     for sample in vcf_orig.samples:
-        process_sample(sample, args.original, imp_ds, variant_info, args.out_dir)
+        process_sample(sample, args.original, imp_ds, variant_info, args.out_dir, args.regions)
 
     print('Done feature calculation')
 

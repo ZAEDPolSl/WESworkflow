@@ -1,10 +1,11 @@
 #!/usr/bin/env Rscript
 
-# This script loads gene-level features, merges them with sample metadata,
+# This script loads an existing raw_ft_long.tsv table,
 # computes UMAP embeddings, estimates batch effect metrics, and saves plots.
+# It is intended for the artificial downstream example dataset.
 # Usage:
 # R_LIBS= R_LIBS_USER= R_LIBS_SITE= R_PROFILE_USER=/dev/null \
-# Rscript --vanilla "Gene-level imputation/1_features_loading.R" config/local_config.yaml
+# Rscript --vanilla "Gene-level imputation/1b_umap_from_raw_ft_long.R" config/local_config.yaml
 
 conda_lib <- file.path(Sys.getenv("CONDA_PREFIX"), "lib/R/library")
 if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
@@ -12,9 +13,8 @@ if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
 }
 
 # ============ these parameters can be adjusted ============
-# ==== but should be consistent across downstream steps ===+
-# UMAP parameters 
-plot_title <- "Data after genotype imputation"
+# UMAP parameters
+plot_title <- "Artificial downstream example dataset"
 umap_params <- list(
 	n_neighbors = 15,
 	min_dist = 0.5,
@@ -23,6 +23,7 @@ umap_params <- list(
 	nn_method = "nndescent",
 	seed = 123
 )
+
 # Batch metric parameters
 batch_metric_params <- list(
 	lisi_perplexity = 30,
@@ -34,13 +35,11 @@ batch_metric_params <- list(
 )
 # ===========================================================
 
-
 suppressPackageStartupMessages({
 	library(data.table)
 	library(ggplot2)
 	library(rnndescent)
 	library(uwot)
-	library(tidyr)
 	library(dplyr)
 })
 
@@ -60,7 +59,7 @@ get_script_path <- function() {
 
 script_path <- get_script_path()
 script_dir <- dirname(script_path)
-repo_dir <- normalizePath(file.path(script_dir, ".."), mustWork = TRUE)
+repo_dir <- normalizePath(file.path(script_dir, "../.."), mustWork = TRUE)
 
 args <- commandArgs(trailingOnly = TRUE)
 config <- if (length(args) >= 1) args[1] else "config/local_config.yaml"
@@ -104,63 +103,54 @@ resolve_path <- function(path) {
 results_dir <- resolve_path(read_config("directories.results_dir"))
 metadata_file <- resolve_path(read_config("directories.sample_metadata"))
 
-features_dir <- file.path(results_dir, "Features")
 output_dir <- file.path(results_dir, "Gene_level_imputation")
 figures_dir <- file.path(output_dir, "Figures")
+raw_ft_long_file <- file.path(output_dir, "raw_ft_long.tsv")
 
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
 
-if (!dir.exists(features_dir)) {
-	stop("Feature directory not found: ", features_dir)
+if (!file.exists(raw_ft_long_file)) {
+	stop("raw_ft_long.tsv not found: ", raw_ft_long_file)
 }
 
-if (!file.exists(metadata_file)) {
-	stop("Metadata file not found: ", metadata_file)
+features <- fread(raw_ft_long_file)
+
+required_feature_cols <- c("Sample", "Gene", "CADD_weighted_avg_AF")
+missing_feature_cols <- setdiff(required_feature_cols, colnames(features))
+
+if (length(missing_feature_cols) > 0) {
+	stop("Missing columns in raw_ft_long.tsv: ", paste(missing_feature_cols, collapse = ", "))
 }
 
-load_chr_features <- function(feature_files_dir) {
-	files <- list.files(
-		feature_files_dir,
-		pattern = "\\.feature\\.txt$",
-		recursive = TRUE,
-		full.names = TRUE
-	)
-
-	if (length(files) == 0) {
-		stop("No .feature.txt files found in: ", feature_files_dir)
+if (!all(c("Dataset", "Kit") %in% colnames(features))) {
+	if (!file.exists(metadata_file)) {
+		stop("Metadata file not found: ", metadata_file)
 	}
 
-	all_features <- rbindlist(lapply(files, function(f) {
-		dt <- fread(f, select = c("Gene", "CADD_weighted_avg_AF"))
-		sample_name <- sub("\\.feature\\.txt$", "", basename(f))
+	meta <- fread(metadata_file)
 
-		dt[, Sample := sample_name]
-		dt
-	}), use.names = TRUE, fill = TRUE)
+	required_meta_cols <- c("Sample", "Dataset", "Kit")
+	missing_meta_cols <- setdiff(required_meta_cols, colnames(meta))
 
-	all_features
+	if (length(missing_meta_cols) > 0) {
+		stop("Missing metadata columns: ", paste(missing_meta_cols, collapse = ", "))
+	}
+
+	meta <- meta[, ..required_meta_cols]
+	features <- merge(features, meta, by = "Sample", all.x = TRUE)
+} else {
+	meta <- unique(features[, .(Sample, Dataset, Kit)])
 }
 
-meta <- fread(metadata_file)
-
-required_cols <- c("Sample", "Dataset", "Kit")
-missing_cols <- setdiff(required_cols, colnames(meta))
-
-if (length(missing_cols) > 0) {
-	stop("Missing metadata columns: ", paste(missing_cols, collapse = ", "))
+if (any(is.na(features$Dataset)) || any(is.na(features$Kit))) {
+	stop("Some samples have missing Dataset or Kit annotations.")
 }
 
-meta <- meta[, ..required_cols]
-
-features <- load_chr_features(features_dir)
-features <- merge(features, meta, by = "Sample", all.x = TRUE)
-
-fwrite(
-	features,
-	file = file.path(output_dir, "raw_ft_long.tsv"),
-	sep = "\t"
-)
+cat("Loaded raw_ft_long.tsv with:\n")
+cat("  samples: ", length(unique(features$Sample)), "\n", sep = "")
+cat("  genes: ", length(unique(features$Gene)), "\n", sep = "")
+cat("  rows: ", nrow(features), "\n", sep = "")
 
 cat("Reshaping data to wide format...\n")
 
@@ -197,7 +187,7 @@ cat(
 	sep = ""
 )
 
-umap_result <- uwot::umap(
+umap_coords <- uwot::umap(
 	umap_matrix,
 	n_neighbors = umap_n_neighbors,
 	min_dist = umap_params$min_dist,
@@ -210,8 +200,8 @@ umap_result <- uwot::umap(
 
 umap_result <- data.table(
 	Sample = sample_ids,
-	UMAP1 = umap_result[, 1],
-	UMAP2 = umap_result[, 2]
+	UMAP1 = umap_coords[, 1],
+	UMAP2 = umap_coords[, 2]
 )
 
 umap_result <- merge(umap_result, meta, by = "Sample", all.x = TRUE)
@@ -222,9 +212,9 @@ fwrite(
 	sep = "\t"
 )
 
-source(file.path(script_dir, "functions", "batch_metrics.R"))
+source(file.path(repo_dir, "Gene-level imputation", "functions", "batch_metrics.R"))
 
-batch_metric_test_size <- batch_metric_params$test_size_fraction *
+batch_metric_test_size <- batch_metric_params$test_size_fraction_kBET *
 	length(unique(features$Sample))
 
 batch_stats <- tryCatch(
@@ -280,16 +270,18 @@ umap_caption <- paste0(
 	", n_epochs=", umap_params$n_epochs
 )
 
-umap_plot <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Dataset)) +
+umap_plot_dataset <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Dataset)) +
 	geom_point(size = 1) +
 	theme_test() +
 	labs(
 		title = plot_title,
 		x = "UMAP 1",
 		y = "UMAP 2",
-		subtitle = batch_subtitle,,
+		color = "Dataset",
+		subtitle = batch_subtitle,
 		caption = umap_caption
-	) + coord_equal()
+	) +
+	coord_equal()
 
 umap_plot_kit <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Kit)) +
 	geom_point(size = 1) +
@@ -301,13 +293,12 @@ umap_plot_kit <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Kit)) +
 		color = "Capture kit",
 		subtitle = batch_subtitle,
 		caption = umap_caption
-	) + coord_equal()
+	) +
+	coord_equal()
 
 pdf(file.path(figures_dir, "raw_UMAP.pdf"), width = 7, height = 6)
-print(umap_plot)
+print(umap_plot_dataset)
 print(umap_plot_kit)
 dev.off()
 
-
-
-cat("Feature loading and UMAP analysis completed.\n")
+cat("UMAP generation from existing raw_ft_long.tsv completed.\n")

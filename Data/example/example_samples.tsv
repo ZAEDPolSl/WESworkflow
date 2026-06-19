@@ -1,0 +1,5 @@
+sample_id	dataset	capture_kit	fastq_r1	fastq_r2
+sample1	ExampleDatasetA	ExampleKitA	Data/example/fastq/sample1_1.fastq.gz	Data/example/fastq/sample1_2.fastq.gz
+sample2	ExampleDatasetA	ExampleKitA	Data/example/fastq/sample2_1.fastq.gz	Data/example/fastq/sample2_2.fastq.gz
+sample3	ExampleDatasetB	ExampleKitB	Data/example/fastq/sample3_1.fastq.gz	Data/example/fastq/sample3_2.fastq.gz
+sample4	ExampleDatasetB	ExampleKitB	Data/example/fastq/sample4_1.fastq.gz	Data/example/fastq/sample4_2.fastq.gz

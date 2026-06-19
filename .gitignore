@@ -21,4 +21,3 @@ Data/reference_panel/
 *.log
 *.tmp
 config/local_config.yaml
-example_results/

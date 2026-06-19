@@ -35,10 +35,6 @@ resources:
   # http://feb2023.archive.ensembl.org/index.html
   reference_fasta: "/path/to/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
 
-  # Adapter FASTA file used by Trimmomatic.
-  # Required only when parameters.trimmomatic_trim_adapters is true.
-  trimmomatic_adapters: "/path/to/TruSeq3-PE.fa"
-
   # Chain file used for BAM liftover from GRCh37/hg19 to GRCh38/hg38.  
   # Download: https://ftp.ensembl.org/pub/assembly_mapping/homo_sapiens/
   liftover_chain: "/path/to/GRCh37_to_GRCh38.chain.gz"
@@ -73,7 +69,8 @@ parameters:
   trimmomatic_illuminaclip: "2:30:10"
   trimmomatic_slidingwindow: "4:20"
   trimmomatic_minlen: 45
-  trimmomatic_trim_adapters: true
+  trimmomatic_trim_adapters: false
+  trimmomatic_adapter_file: "TruSeq3-PE.fa"
   trimmomatic_threads: 8
   fastqc_threads: 24
 
@@ -110,6 +107,11 @@ parameters:
   # Number of parallel jobs used during gene-level feature aggregation in Variant_to_gene/gene_aggregation.sh
   feature_parallel_jobs: 23
 
+  # Number of parallel R workers used during gene-level feature imputation.
+  feature_imputation_workers: 48
+  # Maximum size of exported future globals in GB.
+  feature_imputation_future_max_size_gb: 4
+
   
 
 directories:
@@ -143,10 +145,13 @@ directories:
   # Parent directory searched recursively for DeepVariant gVCF files (i.e. per-dataset directories with DeepVariant-generated g.vcf files)
   # This is used by the GLnexus joint genotyping step.
   gvcf_search_root: "/path/to/general/datasets/parent/directory"
+
   # Main output directory for GLnexus and all downstream steps.
   # The workflow will create subdirectories such as:
   # Genotyping/, Imputation/, Annotation/, Intermediate/, Features/, Results/.
   results_dir: "/path/to/results"
+  # path to sample metadata, expected structure can be found in "Data/example/sample_path_map_example.tsv"
+  sample_metadata: "/path/to/sample/metadata" 
 
    # Directory for temporary and scratch files.
   temporary_dir: "/path/to/tmp"
