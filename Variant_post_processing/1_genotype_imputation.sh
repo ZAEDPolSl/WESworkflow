@@ -151,7 +151,8 @@ preprocess_chromosome() {
 conform_chromosome() {
 	local chrom="$1"
 	local gt_vcf="$INPUT_CHR_DIR/chr${chrom}.vcf.gz"
-	local ref_vcf="$REFERENCE_PANEL_DIR/1kGP.${chrom}.EUR.nochr.vcf.gz"
+	local ref_vcf
+	ref_vcf=$(find "$REFERENCE_PANEL_DIR" -maxdepth 1 -type f -name "1kGP.${chrom}.*.nochr.vcf.gz" | head -n 1)
 	local out_prefix="$INPUT_CHR_DIR/chr${chrom}.conformed"
 	local out_vcf="${out_prefix}.vcf.gz"
 
@@ -193,7 +194,8 @@ impute_chromosome() {
 	local chrom="$1"
 	local gt_vcf="$INPUT_CHR_DIR/chr${chrom}.conformed.vcf.gz"
 	local map_file="$MAP_DIR/plink.chr${chrom}.GRCh38.map"
-	local ref_bref="$REFERENCE_PANEL_DIR/BREF3/1kGP.${chrom}.EUR.nochr.bref3"
+	local ref_bref
+	ref_bref=$(find "$REFERENCE_PANEL_DIR/BREF3" -maxdepth 1 -type f -name "1kGP.${chrom}.*.nochr.bref3" | head -n 1)
 	local out_prefix="$OUTPUT_CHR_DIR/chr${chrom}"
 	local out_vcf="${out_prefix}.vcf.gz"
 
