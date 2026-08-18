@@ -61,8 +61,30 @@ resources:
 
 
 parameters:
-  # In this section, "jobs" refers to externally parallelized processes,
-  # whereas "threads" refers to threads used internally by a given tool.
+  # Parallelization settings are divided into:
+  # - threads: CPU threads used within individual tool;
+  # - jobs: independent processes executed concurrently across samples,
+  #   files, or chromosomes.
+  #
+  # The values below reproduce the settings used in our computational
+  # environment (48 physical cores and 96 logical CPUs, 503 GiB RAM, and 
+  # two NVIDIA RTX 6000 Ada GPUs with 49 GB VRAM each) and should be treated 
+  # as practical defaults rather than universal recommendations.
+  
+  # BWA is a CPU-intensive tool for and benefits from more CPU threads.
+  # FastQC is relatively lightweight, but threading mechanism refers to reading
+  # multiple FASTQ files and may be limited by disk throughput.
+  # DeepVariant uses CPU threads for read processing while variant inference 
+  # runs on the GPU when the GPU image is enabled.
+  # Beagle is both CPU- and memory-intensive. Imputation is parallelized
+  # across per-chromosome jobs, and each job uses multiple internal threads.
+  # Annotation and feature aggregation repeatedly read large annotation or
+  # variant files and are parallelized across chromosomes. 
+
+  # Before increasing a value, ensure that:
+  # jobs * threads does not exceed the allocated CPU resources, and that
+  # jobs * memory_per_process fits within the available RAM.
+  # Storage throughput and scheduler limits may also constrain scalability.
 
   # Trimmomatic settings for Data_pre_processing/QC/trimm.sh
   # Adapter trimming can be disabled by setting trimmomatic_trim_adapters to false.
