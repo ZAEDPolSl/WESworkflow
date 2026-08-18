@@ -102,7 +102,7 @@ fi
 mapfile -t CHROMOSOMES < <(
 	bcftools index -s "$IN_VCF" \
 	| cut -f1 \
-	| awk '$1 ~ /^([1-9]|1[0-9]|2[0-2]|X|Y)$/ {print $1}' \
+	| awk '$1 ~ /^([1-9]|1[0-9]|2[0-2]|X)$/ {print $1}' \
 	| sort -V
 )
 
