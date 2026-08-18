@@ -72,7 +72,7 @@ mkdir -p "$FEATURES_DIR"
 mapfile -t CHROMOSOMES < <(
 	find "$ORIGINAL_DIR" -maxdepth 1 -name "chr*.hg38_multianno.filtered_CADD_scored.vcf.gz" -printf "%f\n" \
 	| sed -E 's/^chr//; s/\.hg38_multianno\.filtered_CADD_scored\.vcf\.gz$//' \
-	| awk '$1 ~ /^([1-9]|1[0-9]|2[0-2]|X|Y)$/ {print $1}' \
+	| awk '$1 ~ /^([1-9]|1[0-9]|2[0-2]|X)$/ {print $1}' \
 	| sort -V
 )
 
