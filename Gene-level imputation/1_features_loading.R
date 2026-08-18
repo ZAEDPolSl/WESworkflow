@@ -224,7 +224,7 @@ fwrite(
 
 source(file.path(script_dir, "functions", "batch_metrics.R"))
 
-batch_metric_test_size <- batch_metric_params$test_size_fraction *
+batch_metric_test_size <- batch_metric_params$test_size_fraction_kBET *
 	length(unique(features$Sample))
 
 batch_stats <- tryCatch(
@@ -287,7 +287,7 @@ umap_plot <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Dataset)) +
 		title = plot_title,
 		x = "UMAP 1",
 		y = "UMAP 2",
-		subtitle = batch_subtitle,,
+		subtitle = batch_subtitle,
 		caption = umap_caption
 	) + coord_equal()
 
