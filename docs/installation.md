@@ -41,7 +41,21 @@ The following external tools are expected to be configured manually:
 
 External resources are specified in our [**external resources guide**](external_resources.md)
 
-## 5. Run the installation check
+## 5. Computational resource configuration
+
+The default runtime parameters in `config/example_config.yaml` were configured for a system with **48 physical CPU cores (96 threads), 503 GiB RAM, and two NVIDIA RTX 6000 Ada GPUs (49 GB VRAM each)**. Users should adjust these settings according to their available hardware.
+
+Parallelization is controlled by two types of parameters:
+- `threads` – CPU threads used within an individual process.
+- `jobs` – independent processes executed concurrently across samples or chromosomes.
+
+When configuring parallel execution, consider the combined CPU and memory requirements (`jobs × threads` and `jobs × memory per process`), as well as storage throughput.
+
+Computational requirements vary across workflow stages. BWA benefits from multithreading, while FastQC parallelization may be limited by disk throughput. DeepVariant uses CPU threads for read processing and optionally GPU acceleration for variant calling. Beagle is both CPU- and memory-intensive, with genotype imputation parallelized across chromosomes. Annotation and gene-level aggregation also involve substantial disk I/O.
+
+Chromosome-level parallelization is limited to 23 jobs (chromosomes 1–22 and X), so increasing the corresponding `jobs` parameters beyond this number provides no additional benefit.
+
+## 6. Run the installation check
 
 After editing the local configuration file, run:
 

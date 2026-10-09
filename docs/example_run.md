@@ -286,23 +286,22 @@ Rscript "Gene-level imputation/1_features_loading.R" config/local_config.yaml
 
 Expected output:
 
-```
+```text
 Data/example/output/results/Gene_level_imputation/
-├── Figures
-│   └── raw_UMAP.pdf
-├── raw_ft_long.tsv
-└── raw_umap_result.tsv
+└── <feature_column>/
+    ├── Results/
+    │   ├── raw_ft_long.tsv
+    │   └── raw_umap_result.tsv
+    └── Figures/
+        └── raw_UMAP.pdf
 ```
-
 This step reads per-sample feature files from:
 
 ```text
 Data/example/output/results/Features/
 ```
 
-and prepares feature matrices for further analysis. UMAP visualizations of the cohort structure, colored by dataset and capture kit, are written to raw_UMAP.pdf, with batch metrics reported in the plot subtitle. The default parameters for UMAP and batch metric calculation were tested for large cohorts ($N > 500$), but they can be adjusted at the beginning of the script. For the small example run containing only four samples, batch metrics are not calculated due to insufficient sample size. In this case, the script issues a warning and continues execution.
-
-
+This step combines per-sample feature files into gene-level matrices using the feature specified by `parameters.feature_column` in the YAML configuration (default: `CADD_weighted_avg_AF`). UMAP visualizations colored by dataset and capture kit are saved in `Figures/raw_UMAP.pdf`, with batch metrics reported in the plot subtitle. For the four-sample example, batch metrics are skipped due to insufficient sample size, and the script continues with a warning.
 The first rows of the generated `raw_ft_long.tsv` file should have the following structure:
 
 ```text
@@ -341,25 +340,20 @@ Data/example_downstream/
 To continue with the downstream gene-level imputation demonstration, replace the small `raw_ft_long.tsv` file generated from the four-sample WES example with the artificial downstream dataset and recompute UMAP:
 
 ```bash
-RESULTS_DIR="$(python scripts/read_config.py config/local_config.yaml directories.results_dir)"
-METADATA_FILE="$(python scripts/read_config.py config/local_config.yaml directories.sample_metadata)"
+RESULTS_DIR="$(python3 scripts/read_config.py config/local_config.yaml directories.results_dir)"
+METADATA_FILE="$(python3 scripts/read_config.py config/local_config.yaml directories.sample_metadata)"
+FEATURE="$(python3 scripts/read_config.py config/local_config.yaml parameters.feature_column)"
 
 [[ "$RESULTS_DIR" != /* ]] && RESULTS_DIR="$PWD/$RESULTS_DIR"
 [[ "$METADATA_FILE" != /* ]] && METADATA_FILE="$PWD/$METADATA_FILE"
 
-DOWNSTREAM_DIR="$RESULTS_DIR/Gene_level_imputation"
+DOWNSTREAM_DIR="$RESULTS_DIR/Gene_level_imputation/$FEATURE/Results"
 
-cp "$DOWNSTREAM_DIR/raw_ft_long.tsv" \
-   "$DOWNSTREAM_DIR/raw_ft_long.from_wes_example.tsv"
+cp "$DOWNSTREAM_DIR/raw_ft_long.tsv" "$DOWNSTREAM_DIR/raw_ft_long.from_wes_example.tsv"
+cp "$METADATA_FILE" "${METADATA_FILE}.from_wes_example"
 
-cp "$METADATA_FILE" \
-   "${METADATA_FILE}.from_wes_example"
-
-cp Data/example_downstream/raw_ft_long.tsv \
-   "$DOWNSTREAM_DIR/raw_ft_long.tsv"
-
-cp Data/example_downstream/metadata.tsv \
-   "$METADATA_FILE"
+cp Data/example_downstream/raw_ft_long.tsv "$DOWNSTREAM_DIR/raw_ft_long.tsv"
+cp Data/example_downstream/metadata.tsv "$METADATA_FILE"
 
 Rscript "Data/example_downstream/umap_from_raw_ft_long.R" config/local_config.yaml
 ```
@@ -367,7 +361,7 @@ Rscript "Data/example_downstream/umap_from_raw_ft_long.R" config/local_config.ya
 The original four-sample WES-derived table is kept as:
 
 ```text
-Data/example/output/results/Gene_level_imputation/raw_ft_long.from_wes_example.tsv
+Data/example/output/results/Gene_level_imputation/<feature_column>/Results/raw_ft_long.from_wes_example.tsv
 ```
 
 and the original metadata file is backed up with the `.from_wes_example` suffix.
@@ -382,18 +376,21 @@ After this replacement, the following downstream scripts operate on the artifici
 Rscript "Gene-level imputation/2_clustering.R" config/local_config.yaml
 ```
 
-This step clusters samples based on the generated gene-level feature matrix and produces the UMAP visualization of clustering results. The clustering results are used in the downstream detection-rate modeling and gene-level feature imputation steps. Clustering parameters can be adjusted at the beginning of the script.
+This step performs PARC clustering using the selected gene-level feature and visualizes cluster assignments on UMAP. The `knn` and `resolution` parameters can be adjusted at the beginning of `2_clustering.R`.
 
+Users can run the script multiple times with different parameter combinations. Each run saves a separate cluster mapping file in `Results/Clustering/`, allowing different configurations to be compared. After selecting the preferred clustering configuration, copy the corresponding file to `Results/sample_kit_cluster_map.tsv` before proceeding to detection-rate modeling and gene-level imputation.
 Expected output:
 
 ```text
 Data/example/output/results/Gene_level_imputation/
-├── Figures
-│   ├── PARC_clustering.pdf
-│   └── ...
-├── ...
-├── sample_kit_cluster_map.tsv
-└── umap_parc_k30r1.tsv
+└── CADD_weighted_avg_AF/
+    ├── Results/
+    │   ├── Clustering/
+    │   │   └── k30r1_cluster_map.tsv
+    │   ├── sample_kit_cluster_map.tsv
+    │   └── umap_parc_k30r1.tsv
+    └── Figures/
+        └── PARC_clustering.pdf
 ```
 
 ![Example PARC clustering](../Data/example_results/PARC_clustering.png)
@@ -412,12 +409,15 @@ Expected output:
 
 ```text
 Data/example/output/results/Gene_level_imputation/
-├── GMM_det_rate.RDS
-├── ...
-└── Figures
-    ├── dpGMM_detection_rate_plot.pdf
-    └── ...
+└── CADD_weighted_avg_AF/
+    ├── Results/
+    │   └── GMM_det_rate.RDS
+    └── Figures/
+        └── dpGMM_detection_rate_plot.pdf
 ```
+
+The GMM results provide guidance for selecting detection-rate thresholds but do not automatically determine the final values. Users should inspect the detection-rate distribution and manually configure `threshold_low_value` and `threshold_high_value` at the beginning of `4_feature_imputation.R` before proceeding to gene-level imputation.
+
 ![Example GMM](../Data/example_results/dpGMM_detection_rate_plot.png)
 
 ## 12. Gene-level feature imputation
@@ -440,14 +440,13 @@ Expected output:
 
 ```text
 Data/example/output/results/Gene_level_imputation/
-├── Figures
-│   ├── a0.44_b0.85_k10_UMAP_cluster_colored.pdf
-│   ├── a0.44_b0.85_k10_UMAP.pdf
-│   └── ...
-├── ft_imp_a0.44_b0.85_k10_long.tsv
-├── ft_imp_a0.44_b0.85_k10_umap_result.tsv
-├── ft_imp_a0.44_b0.85_k10_wide.tsv
-└── ...
+└── CADD_weighted_avg_AF/
+    ├── Results/
+    │   ├── ft_imp_a0.44_b0.85_k10_long.tsv
+    │   ├── ft_imp_a0.44_b0.85_k10_wide.tsv
+    │   └── ft_imp_a0.44_b0.85_k10_umap_result.tsv
+    └── Figures/
+        └── gene_imputation_a0.44_b0.85_k10_UMAP.pdf
 ```
 
 ![Gene imputation results](../Data/example_results/imputed_UMAP.png)
