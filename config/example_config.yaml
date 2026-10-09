@@ -129,6 +129,8 @@ parameters:
   # Number of parallel jobs used during gene-level feature aggregation in Variant_to_gene/gene_aggregation.sh
   feature_parallel_jobs: 23
 
+  # Column name in the feature table containing desired feature values (can be changed if user wants to specify own metric)
+  feature_column: "CADD_weighted_avg_AF"
   # Number of parallel R workers used during gene-level feature imputation.
   feature_imputation_workers: 48
   # Maximum size of exported future globals in GB.
@@ -177,3 +179,4 @@ directories:
 
    # Directory for temporary and scratch files.
   temporary_dir: "/path/to/tmp"
+  
