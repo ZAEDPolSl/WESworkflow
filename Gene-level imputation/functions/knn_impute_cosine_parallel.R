@@ -90,6 +90,8 @@ knn_impute_mnar_masked_parallel <- function(X_raw, MNAR, grp, k = 10, min_k = 5,
   ))
   X_out[is.na(X_out) & !MNAR] <- 0
 
+  attr(X_out, "n_imputed") <- sum(MNAR) - zero_total
+
   X_out
 }
 

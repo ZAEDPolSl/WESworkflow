@@ -1,40 +1,23 @@
 #!/usr/bin/env Rscript
 
-# This script performs MNAR-aware feature imputation and downstream analysis
-# on gene-level WES-derived features:
+# This script performs MNAR-aware gene-level feature imputation.
 #
-# (1) Loads gene-level feature data and cluster assignments generated in previous steps
-#
-# (2) Identifies Missing Not At Random (MNAR) patterns at the gene × cluster level
-#     based on detection rate thresholds derived from a Gaussian Mixture Model (GMM)
-#
-# (3) Constructs a sample × gene feature matrix and applies masked KNN imputation
-#     (cosine similarity, cross-group donor selection) to impute only MNAR values
-#
-# (4) Saves imputed feature matrices in both wide and long formats
-#
-# (5) Evaluates batch effects using LISI and kBET metrics
-#
-# (6) Recomputes UMAP embeddings on imputed features and generates visualizations
-#     to assess the impact of imputation on data integration
+# MNAR values are identified using GMM-derived detection-rate thresholds
+# and imputed with masked KNN using cross-group donors and cosine similarity.
+# The script then evaluates batch effects using LISI and kBET and recomputes
+# UMAP embeddings for the imputed feature matrix.
 #
 # Input:
-# - Long-format feature table (raw_ft_long.tsv)
-# - Sample-to-cluster mapping (sample_kit_cluster_map.tsv)
-# - GMM model with detection rate thresholds (GMM_det_rate.RDS)
-# - Metadata file (sample_path_map_example.tsv)
+# - Gene-level feature table
+# - Sample cluster assignments
+# - GMM detection-rate model
 #
 # Output:
 # - Imputed feature matrices (wide and long format)
-# - UMAP coordinates after imputation
-# - UMAP plots (dataset- and cluster-colored)
-# - Batch effect metrics (printed to console)
+# - UMAP coordinates and plots
+# - LISI and kBET metrics
 #
-# Notes:
-# - Imputation is restricted to MNAR entries only (masked imputation)
-# - External resources (metadata, feature files) are not included in the repository
-# - Parameters (a, b, k) control MNAR detection and KNN imputation behavior
-# - Computationally intensive (parallel KNN, large matrices)
+# Parameters a, b, and k control MNAR detection and KNN imputation.
 #
 # Usage:
 # R_LIBS= R_LIBS_USER= R_LIBS_SITE= R_PROFILE_USER=/dev/null \
@@ -51,8 +34,8 @@ if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
 # in that group is <= threshold_low_value, while its detection rate in
 # another sufficiently large group is >= threshold_high_value.
 # currently set thresholds are adjusted to example run
-threshold_low_value <- 0.44
-threshold_high_value <- 0.85
+threshold_low_value <- 0.234
+threshold_high_value <- 0.811
 
 # ================== these parameters can be adjusted ================
 
@@ -152,18 +135,19 @@ resolve_path <- function(path) {
 	file.path(repo_dir, path)
 }
 
-dir <- resolve_path(read_config("directories.results_dir"))
-results_dir <- file.path(dir, "Gene_level_imputation")
-figures_dir <- file.path(results_dir, "Figures")
+feature_column <- read_config("parameters.feature_column")
+results_dir <- resolve_path(read_config("directories.results_dir"))
+output_dir <- file.path(results_dir, "Gene_level_imputation", feature_column)
+figures_dir <- file.path(output_dir, "Figures")
 metadata_file <- resolve_path(read_config("directories.sample_metadata"))
 future_workers <- as.integer(read_config("parameters.feature_imputation_workers"))
 future_max_size_gb <- as.numeric(read_config("parameters.feature_imputation_future_max_size_gb"))
 
-dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
 
-ft_file <- file.path(results_dir, "raw_ft_long.tsv")
-clusters_file <- file.path(results_dir, "sample_kit_cluster_map.tsv")
+ft_file <- file.path(output_dir, "Results", "raw_ft_long.tsv")
+clusters_file <- file.path(output_dir, "Results", "sample_kit_cluster_map.tsv")
 
 
 knn_function_file <- file.path(script_dir, "functions", "knn_impute_cosine_parallel.R")
@@ -202,7 +186,7 @@ if (!file.exists(batch_metrics_file)) {
 ft <- fread(ft_file)
 clusters <- fread(clusters_file)
 
-required_ft_cols <- c("Sample", "Gene", "CADD_weighted_avg_AF")
+required_ft_cols <- c("Sample", "Gene", feature_column)
 missing_ft_cols <- setdiff(required_ft_cols, colnames(ft))
 
 if (length(missing_ft_cols) > 0) {
@@ -248,7 +232,7 @@ source(batch_metrics_file)
 
 for (a in a_params) {
 	for (b in b_params) {
-		# ft: data.table with columns: Sample, Group, Gene, CADD_weighted_avg_AF
+		# ft: data.table with columns: Sample, Group, Gene, and feature_columne (e.g. CADD_weighted_avg_AF)
 		base <- fname_base(a, b, k)
 		# examples
 		# saveRDS(X_imp,   paste0(dir, base, "_raw.rds"))
@@ -262,7 +246,7 @@ for (a in a_params) {
 
 		# 2) Detections per Gene x group (presence = any value > 0 in sample)
 		det_tbl <- ft[
-			CADD_weighted_avg_AF > 0,
+			get(feature_column) > 0,
 			.(det_n = uniqueN(Sample)),
 			by = .(Gene, Group)
 		]
@@ -315,7 +299,7 @@ for (a in a_params) {
 		mat <- dcast(
 			ft,
 			Sample + Group ~ Gene,
-			value.var = "CADD_weighted_avg_AF",
+			value.var = feature_column,
 			fun.aggregate = function(x) if (length(x)) mean(x) else NA_real_,
 			fill = NA_real_
 		)
@@ -360,6 +344,9 @@ for (a in a_params) {
 			min_k = knn_min_k
 		)
 
+		n_imputed <- attr(X_imp, "n_imputed")
+		fraction_imputed <- 100 * n_imputed / length(X_imp)
+
 		X_imp[X_imp < 0] <- 0
 		X_imp[X_imp > 1] <- 1
 
@@ -375,22 +362,27 @@ for (a in a_params) {
 			select(Sample, Dataset, Group, Kit, dplyr::everything()) %>%
 			setDT()
 
+		cat(sprintf(
+			"Imputed values: %d / %d (%.4f%%)\n",
+			n_imputed, length(X_imp), fraction_imputed
+		))
+
 		df_long <- data.table::melt(
 			X_imp,
 			id.vars = c("Sample", "Dataset", "Group", "Kit"),
 			variable.name = "Gene",
-			value.name = "CADD_weighted_avg_AF"
+			value.name = feature_column
 		)
 
 		data.table::fwrite(
 			X_imp,
-			file.path(results_dir, paste0(base, "_wide.tsv")),
+			file.path(output_dir, "Results", paste0(base, "_wide.tsv")),
 			sep = "\t"
 		)
 
 		data.table::fwrite(
 			df_long,
-			file.path(results_dir, paste0(base, "_long.tsv")),
+			file.path(output_dir, "Results", paste0(base, "_long.tsv")),
 			sep = "\t"
 		)
 
@@ -403,7 +395,8 @@ for (a in a_params) {
 
 		batch_stats <- compute_batch_metrics_df(
 			df_long %>%
-				select(Sample, Dataset, Gene, CADD_weighted_avg_AF),
+				select(Sample, Dataset, Gene, all_of(feature_column)),
+			feature_column = feature_column,
 			lisi_perplexity = batch_metric_params$lisi_perplexity,
 			k_kBET = batch_metric_params$k_kBET,
 			test_size = batch_metric_test_size,
@@ -445,7 +438,7 @@ for (a in a_params) {
 
 		data.table::fwrite(
 			umap_result,
-			file.path(results_dir, paste0(base, "_umap_result.tsv")),
+			file.path(output_dir, "Results", paste0(base, "_umap_result.tsv")),
 			sep = "\t"
 		)
 
@@ -461,35 +454,30 @@ for (a in a_params) {
 
 		plot_title <- paste0(
 			"Feature Imputation\na=", round(a, 3),
-			" b=", round(b, 3),
-			" kn=", k,
+			"  b=", round(b, 3),
+			"  kn=", k,
 			"\nLISI=", round(batch_stats$lisi_stats$mean, 2),
-			" | kBET=", round(batch_stats$kbet_stats$mean, 3)
+			" | kBET=", round(batch_stats$kbet_stats$mean, 3),
+			" | imputed=", sprintf("%.3f%%", fraction_imputed)
 		)
 
-		umap_plot <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Dataset)) +
-			geom_point() +
+		umap_plot1 <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Dataset)) +
+			geom_point(size = 1, alpha = 0.5) +
 			theme_test() +
 			labs(
 				title = plot_title,
 				x = "UMAP 1",
 				y = "UMAP 2",
-				caption = umap_caption
+				caption = umap_caption,
+				color = "Dataset"
 			) +
-			scale_color_hue() + coord_equal()
+			colorspace::scale_color_discrete_qualitative(palette = "Dark2") +
+			theme(aspect.ratio = 1) +
+			guides(color = guide_legend(override.aes = list(size = 3, alpha = 0.6)))
 
-		print(umap_plot)
-
-		pdf(
-			file.path(figures_dir, paste0(gsub("ft_imp_", "", base), "_UMAP.pdf")),
-			width = 7,
-			height = 6
-		)
-		print(umap_plot)
-		dev.off()
 
 		umap_plot2 <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = as.factor(Group))) +
-			geom_point() +
+			geom_point(size = 1, alpha = 0.5) +
 			theme_test() +
 			labs(
 				title = plot_title,
@@ -498,16 +486,34 @@ for (a in a_params) {
 				caption = umap_caption,
 				color = "Cluster"
 			) +
-			scale_color_hue() + coord_equal()
+			colorspace::scale_color_discrete_qualitative(palette = "Dark3") + 
+			theme(aspect.ratio = 1) +
+			guides(color = guide_legend(override.aes = list(size = 3, alpha = 0.6)))
 
-		print(umap_plot2)
+		umap_plot3 <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Kit)) +
+			geom_point(size = 1, alpha = 0.5) +
+			theme_test() +
+			labs(
+				title = plot_title,
+				x = "UMAP 1",
+				y = "UMAP 2",
+				caption = umap_caption,
+				color = "Capture kit"
+			) +
+			colorspace::scale_color_discrete_qualitative(palette = "Dark3") + 
+			theme(aspect.ratio = 1) +
+			guides(color = guide_legend(override.aes = list(size = 3, alpha = 0.6)))
 
 		pdf(
-			file.path(figures_dir, paste0(gsub("ft_imp_", "", base), "_UMAP_cluster_colored.pdf")),
-			width = 6,
+			file.path(figures_dir, paste0("gene_imputation_", gsub("ft_imp_", "", base), "_UMAP.pdf")),
+			width = 7,
 			height = 6
 		)
 		print(umap_plot2)
+	
+		print(umap_plot3)
+
+		print(umap_plot1)
 		dev.off()
 
 		cat("UMAP: DONE\n")
