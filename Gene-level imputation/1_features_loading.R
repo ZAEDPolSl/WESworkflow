@@ -103,13 +103,14 @@ resolve_path <- function(path) {
 
 results_dir <- resolve_path(read_config("directories.results_dir"))
 metadata_file <- resolve_path(read_config("directories.sample_metadata"))
-
+feature_column <- read_config("parameters.feature_column")
 features_dir <- file.path(results_dir, "Features")
-output_dir <- file.path(results_dir, "Gene_level_imputation")
+output_dir <- file.path(results_dir, "Gene_level_imputation", feature_column)
 figures_dir <- file.path(output_dir, "Figures")
 
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(output_dir, "Results"), recursive = TRUE, showWarnings = FALSE)
 
 if (!dir.exists(features_dir)) {
 	stop("Feature directory not found: ", features_dir)
@@ -132,12 +133,26 @@ load_chr_features <- function(feature_files_dir) {
 	}
 
 	all_features <- rbindlist(lapply(files, function(f) {
-		dt <- fread(f, select = c("Gene", "CADD_weighted_avg_AF"))
+		dt <- fread(f, select = c("Gene", feature_column))
 		sample_name <- sub("\\.feature\\.txt$", "", basename(f))
+		chr <- basename(dirname(f))
 
-		dt[, Sample := sample_name]
+		dt[, `:=`(
+			Sample = sample_name,
+			Chr = chr
+		)]
+
 		dt
 	}), use.names = TRUE, fill = TRUE)
+
+	multichr_genes <- all_features[, uniqueN(Chr), by = Gene][V1 > 1, Gene]
+
+	all_features[
+		Gene %in% multichr_genes,
+		Gene := paste0(Gene, "_", Chr)
+	]
+
+	all_features[, Chr := NULL]
 
 	all_features
 }
@@ -156,22 +171,38 @@ meta <- meta[, ..required_cols]
 features <- load_chr_features(features_dir)
 features <- merge(features, meta, by = "Sample", all.x = TRUE)
 
+missing_metadata <- features[
+	is.na(Dataset) | Dataset == "",
+	.(Sample, Dataset)
+]
+
+if (nrow(missing_metadata) > 0) {
+	print(unique(missing_metadata))
+	stop("Missing metadata after merging features with sample metadata.")
+}
+
+duplicates <- features[, .N, by = .(Sample, Gene)][N > 1]
+
+if (nrow(duplicates) > 0) {
+	print(duplicates)
+	stop("Duplicated Sample-Gene combinations found.")
+}
+
 fwrite(
 	features,
-	file = file.path(output_dir, "raw_ft_long.tsv"),
+	file = file.path(output_dir, "Results", "raw_ft_long.tsv"),
 	sep = "\t"
 )
 
 cat("Reshaping data to wide format...\n")
 
-umap_input <- features[, .(Sample, Gene, CADD_weighted_avg_AF)]
+umap_input <- features[, c("Sample", "Gene", feature_column), with = FALSE]
 
 umap_input <- dcast(
 	umap_input,
 	Sample ~ Gene,
-	value.var = "CADD_weighted_avg_AF",
-	fill = 0,
-	fun.aggregate = sum
+	value.var = feature_column,
+	fill = 0
 )
 
 sample_ids <- umap_input$Sample
@@ -218,7 +249,7 @@ umap_result <- merge(umap_result, meta, by = "Sample", all.x = TRUE)
 
 fwrite(
 	umap_result,
-	file.path(output_dir, "raw_umap_result.tsv"),
+	file.path(output_dir, "Results", "raw_umap_result.tsv"),
 	sep = "\t"
 )
 
@@ -226,10 +257,11 @@ source(file.path(script_dir, "functions", "batch_metrics.R"))
 
 batch_metric_test_size <- batch_metric_params$test_size_fraction_kBET *
 	length(unique(features$Sample))
-
+cat("Feature:", feature_column, "\n")
 batch_stats <- tryCatch(
 	compute_batch_metrics_df(
 		features,
+		feature_column = feature_column,
 		lisi_perplexity = batch_metric_params$lisi_perplexity,
 		k_kBET = batch_metric_params$k_kBET,
 		test_size = batch_metric_test_size,
@@ -281,7 +313,7 @@ umap_caption <- paste0(
 )
 
 umap_plot <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Dataset)) +
-	geom_point(size = 1) +
+	geom_point(size = 1, alpha = 0.5) +
 	theme_test() +
 	labs(
 		title = plot_title,
@@ -289,10 +321,13 @@ umap_plot <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Dataset)) +
 		y = "UMAP 2",
 		subtitle = batch_subtitle,
 		caption = umap_caption
-	) + coord_equal()
+	) + colorspace::scale_color_discrete_qualitative(palette = "Dark3") + 
+	theme(aspect.ratio = 1) +
+	guides(color = guide_legend(override.aes = list(size = 3, alpha = 0.6)))
+
 
 umap_plot_kit <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Kit)) +
-	geom_point(size = 1) +
+	geom_point(size = 1, alpha = 0.5) +
 	theme_test() +
 	labs(
 		title = plot_title,
@@ -301,7 +336,10 @@ umap_plot_kit <- ggplot(umap_result, aes(x = UMAP1, y = UMAP2, color = Kit)) +
 		color = "Capture kit",
 		subtitle = batch_subtitle,
 		caption = umap_caption
-	) + coord_equal()
+	) + colorspace::scale_color_discrete_qualitative(palette = "Dark3") + 
+	theme(aspect.ratio = 1)  +
+	guides(color = guide_legend(override.aes = list(size = 3, alpha = 0.6)))
+
 
 pdf(file.path(figures_dir, "raw_UMAP.pdf"), width = 7, height = 6)
 print(umap_plot)

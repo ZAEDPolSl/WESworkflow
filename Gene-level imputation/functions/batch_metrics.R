@@ -1,16 +1,15 @@
 
-compute_batch_metrics_df <- function(df, lisi_perplexity = 30, k_kBET = 15, test_size = 0.1*length(unique(df$Sample)), heuristic_kBET = FALSE, adapt_kBET = FALSE, PCA_kBET = TRUE) {
-  stopifnot(all(c("CADD_weighted_avg_AF","Sample","Dataset") %in% names(df)))
-  stopifnot(any(c("Gene","gene") %in% names(df)))
+compute_batch_metrics_df <- function(df, feature_column = "CADD_weighted_avg_AF", lisi_perplexity = 30, k_kBET = 15, test_size = 0.1*length(unique(df$Sample)), heuristic_kBET = FALSE, adapt_kBET = FALSE, PCA_kBET = TRUE) {
+	stopifnot(all(c(feature_column, "Sample", "Dataset") %in% names(df)))
 
   if ("Gene" %in% names(df)) {df <- df %>% 
     rename(gene = Gene)}
 
   wide <- df |>
-    dplyr::select(gene, CADD_weighted_avg_AF, Sample, Dataset) |>
+    dplyr::select(gene, dplyr::all_of(feature_column), Sample, Dataset) |>
     dplyr::group_by(Sample, Dataset, gene) |>
-    dplyr::summarise(CADD_weighted_avg_AF = mean(CADD_weighted_avg_AF), .groups = "drop") |>
-    tidyr::pivot_wider(names_from = gene, values_from = CADD_weighted_avg_AF, values_fill = 0)
+    dplyr::summarise(value = mean(.data[[feature_column]]), .groups = "drop") |>
+    tidyr::pivot_wider(names_from = gene, values_from = value, values_fill = 0)
 
   meta <- wide |> dplyr::select(Sample, Dataset)
   X <- as.matrix(wide |> dplyr::select(-Sample, -Dataset))
