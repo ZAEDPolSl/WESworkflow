@@ -79,13 +79,14 @@ resolve_path <- function(path) {
 	file.path(repo_dir, path)
 }
 
+
 results_dir <- resolve_path(read_config("directories.results_dir"))
 
-output_dir <- file.path(results_dir, "Gene_level_imputation")
+output_dir <- file.path(results_dir, "Gene_level_imputation", read_config("parameters.feature_column"))
 figures_dir <- file.path(output_dir, "Figures")
 
-features_file <- file.path(output_dir, "raw_ft_long.tsv")
-clusters_file <- file.path(output_dir, "sample_kit_cluster_map.tsv")
+features_file <- file.path(output_dir, "Results", "raw_ft_long.tsv")
+clusters_file <- file.path(output_dir, "Results", "sample_kit_cluster_map.tsv")
 
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
@@ -101,7 +102,8 @@ if (!file.exists(clusters_file)) {
 ft_long <- fread(features_file)
 clusters <- fread(clusters_file)
 
-required_feature_cols <- c("Sample", "Gene", "CADD_weighted_avg_AF")
+feature_column <- read_config("parameters.feature_column")
+required_feature_cols <- c("Sample", "Gene", feature_column)
 missing_feature_cols <- setdiff(required_feature_cols, colnames(ft_long))
 
 if (length(missing_feature_cols) > 0) {
@@ -127,7 +129,7 @@ sample_group <- unique(ft_long[, .(Sample, Group)])
 n_total <- sample_group[, .(Total = .N), by = Group]
 
 detected <- unique(
-	ft_long[CADD_weighted_avg_AF > 0, .(Sample, Group, Gene)]
+	ft_long[get(feature_column) > 0, .(Sample, Group, Gene)]
 )
 
 det_rate <- detected[, .(Detected = .N), by = .(Group, Gene)]
@@ -144,7 +146,7 @@ mix_test <- runGMM(det_rate$Detection_rate, opts = custom_settings)
 
 saveRDS(
 	mix_test,
-	file.path(output_dir, "GMM_det_rate.RDS")
+	file.path(output_dir, "Results", "GMM_det_rate.RDS")
 )
 
 thresholds <- mix_test[["threshold"]]
