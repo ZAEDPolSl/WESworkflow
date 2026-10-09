@@ -55,39 +55,21 @@ resources:
   reference_panel_dir: "Data/reference_panel/EUR_nochr"
 
   # Pre-scored CADD SNV file (corresponding .tbi index should be present next to it)
-  # Dwonload: https://cadd.bihealth.org/download
+  # Download: https://cadd.bihealth.org/download
   cadd_prescored: "/path/to/CADD/whole_genome_SNVs.tsv.gz"
 
 
 
 parameters:
-  # Parallelization settings are divided into:
-  # - threads: CPU threads used within individual tool;
-  # - jobs: independent processes executed concurrently across samples,
-  #   files, or chromosomes.
-  #
-  # The values below reproduce the settings used in our computational
-  # environment (48 physical cores and 96 logical CPUs, 503 GiB RAM, and 
-  # two NVIDIA RTX 6000 Ada GPUs with 49 GB VRAM each) and should be treated 
-  # as practical defaults rather than universal recommendations.
+  # Runtime settings should be adjusted to available computational resources.
+  # threads: CPU threads per process; jobs: concurrently executed processes.
+  # Ensure sufficient CPU, RAM, and storage bandwidth when running parallel jobs.
   
-  # BWA is a CPU-intensive tool for and benefits from more CPU threads.
-  # FastQC is relatively lightweight, but threading mechanism refers to reading
-  # multiple FASTQ files and may be limited by disk throughput.
-  # DeepVariant uses CPU threads for read processing while variant inference 
-  # runs on the GPU when the GPU image is enabled.
-  # Beagle is both CPU- and memory-intensive. Imputation is parallelized
-  # across per-chromosome jobs, and each job uses multiple internal threads.
-  # Annotation and feature aggregation repeatedly read large annotation or
-  # variant files and are parallelized across chromosomes. 
+  # Default values reproduce the settings used in our computational
+  # environment (48 physical cores and 96 logical CPUs, 503 GiB RAM, and
+  # two NVIDIA RTX 6000 Ada GPUs with 49 GB VRAM each).
 
-  # Before increasing a value, ensure that:
-  # jobs * threads does not exceed the allocated CPU resources, and that
-  # jobs * memory_per_process fits within the available RAM.
-  # Storage throughput and scheduler limits may also constrain scalability.
-
-  # Trimmomatic settings for Data_pre_processing/QC/trimm.sh
-  # Adapter trimming can be disabled by setting trimmomatic_trim_adapters to false.
+  # --- 1. Quality control and trimming ---
   trimmomatic_illuminaclip: "2:30:10"
   trimmomatic_slidingwindow: "4:20"
   trimmomatic_minlen: 45
@@ -96,42 +78,39 @@ parameters:
   trimmomatic_threads: 8
   fastqc_threads: 24
 
-  # Data_pre_processing/Liftover/liftover_bams.sh
-  liftover_threads: 24
-
-
-  # Alignment and duplicate-marking settings for Data_pre_processing/Alignment/alignment.sh
+  # --- 2. Alignment and liftover ---
   alignment_threads: 60
-  bwa_min_score: 0 # minimal score of alignment
+  bwa_min_score: 0
   mark_duplicates_jobs: 8
-  # FASTQ filename suffixes expected by the alignment script.
+
+  # Expected FASTQ filename suffixes. Alternative is .fastq.gz for compressed files.
   fastq_r1_suffix: "_1.fastq"
   fastq_r2_suffix: "_2.fastq"
+  liftover_threads: 24
 
-  # For Variant_calling/Joint_genotyping/run_GLnexus.sh bcf to vcf convertion
+  # --- 3. Variant calling and joint genotyping ---
+  deepvariant_threads: 30
+  # Requires a compatible DeepVariant Docker image.
+  deepvariant_use_gpu: true
   bcftools_threads: 40
 
-  # DeepVariant runtime settings for Variant_calling/Calling/run_deepvariant.sh
-  deepvariant_threads: 30
-  deepvariant_use_gpu: true
-
-  # Downstream this step number of parallel is set to 23 allowing to process all the chromosomes separately
-  # Thus, setting this number at any higher number will have no positive effect, this is the total number of inputs
-  
-  # Genotype imputation settings for Variant_post_processing/1_genotype_imputation.sh
+  # --- 4. Genotype imputation ---
+  # Maximum 23 parallel chromosome jobs (autosomes and X).
   imputation_parallel_jobs: 23
-  imputation_ad_threshold: 5 # retain only the records, where et least one sample has AD > 5
+  # Retain sites with at least one sample having ALT allelic depth > threshold.
+  imputation_ad_threshold: 5
   beagle_threads: 10
 
-  # Used in: Variant_post_processing/2_annotation.sh
+  # --- 5. Variant annotation ---
   annotation_parallel_jobs: 23
 
-  # Number of parallel jobs used during gene-level feature aggregation in Variant_to_gene/gene_aggregation.sh
+  # --- 6. Gene-level feature generation ---
   feature_parallel_jobs: 23
 
-  # Column name in the feature table containing desired feature values (can be changed if user wants to specify own metric)
+  # --- 7. Gene-level analysis and imputation ---
+  # Primary: CADD_weighted_avg_AF; alternative: CADD_weighted_cumulated_af.
   feature_column: "CADD_weighted_avg_AF"
-  # Number of parallel R workers used during gene-level feature imputation.
+
   feature_imputation_workers: 48
   # Maximum size of exported future globals in GB.
   feature_imputation_future_max_size_gb: 4
@@ -139,44 +118,32 @@ parameters:
   
 
 directories:
-  # Directory with raw paired-end FASTQ files used by the trimming step.
+  # --- FASTQ preprocessing and alignment ---
   raw_fastq: "/path/to/fastq"
-  # Output directory for trimmed FASTQ files and FastQC/MultiQC reports.
   trimmed_fastq: "/path/to/trimmed_fastq_files"
-
-  # Directory with hg19/GRCh37 BAM files used as input for liftover (if performed)
-  hg19_bam: "/path/to/hg19_bam_files"
-  # Output directory for lifted GRCh38 BAM files.
-  lifted_bam: "/path/to/lifted_bam_files"
-
-  # Directory with FASTQ files used by the alignment step.
-  # This can point to trimmed_fastq if alignment should use trimmed reads.
   alignment_fastq: "/path/to/fastq_files"
-  # Output directory for aligned and duplicate-marked BAM files.
   bam: "/path/to/aligned_bam_files"
 
-  # Directory with BAM files used as direct DeepVariant input.
-  # For newly aligned samples, this can be the same as directories.bam.
-  # For lifted samples, this can point to directories.lifted_bam.
+  # --- BAM liftover ---
+  hg19_bam: "/path/to/hg19_bam_files"
+  lifted_bam: "/path/to/lifted_bam_files"
+
+  # --- Variant calling and joint genotyping ---
+  # Input BAM directory and suffix must match the selected processing route.
   deepvariant_bam: "/path/to/deepvariant_input_bam_files"
-  # depending on workflow, if bams were aligned they will have _marked.bam suffix after duplicate marking
-  # if bam were lifted, they wil have .sorted.bam suffix
-  # it's important to specify it correctly in order to prevent using also unmarked/unsorted files
+  # Common suffixes: "_marked.bam" (aligned) or ".sorted.bam" (lifted).
   deepvariant_bam_suffix: "_marked.bam"
-  # Output directory for per-sample DeepVariant VCF/gVCF files.
   deepvariant_output: "/path/to/vcf_files/snv"
 
-  # Parent directory searched recursively for DeepVariant gVCF files (i.e. per-dataset directories with DeepVariant-generated g.vcf files)
-  # This is used by the GLnexus joint genotyping step.
+  # Parent directory searched recursively for GVCF files.
   gvcf_search_root: "/path/to/general/datasets/parent/directory"
 
-  # Main output directory for GLnexus and all downstream steps.
-  # The workflow will create subdirectories such as:
-  # Genotyping/, Imputation/, Annotation/, Intermediate/, Features/, Results/.
+  # --- Shared inputs and outputs ---
+  # Main output directory for GLnexus and subsequent workflow stages.
   results_dir: "/path/to/results"
-  # path to sample metadata, expected structure can be found in "Data/example/sample_path_map_example.tsv"
-  sample_metadata: "/path/to/sample/metadata" 
 
-   # Directory for temporary and scratch files.
+  # Sample metadata with the expected structure described in the example.
+  sample_metadata: "/path/to/sample/metadata"
+
+  # Temporary and scratch files.
   temporary_dir: "/path/to/tmp"
-  
