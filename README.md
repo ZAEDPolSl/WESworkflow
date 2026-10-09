@@ -20,17 +20,11 @@ Then edit `config/local_config.yaml` so that all tool paths, resource paths, inp
 
 Before running the full workflow on a cohort, run the lightweight installation check described in the [installation guide](docs/installation.md). This step verifies that dependencies, external binaries, reference files, and configuration paths are visible before launching computationally expensive jobs.
 
-After installation and configuration are complete, users can run the lightweight example workflow described in the [example run guide](docs/example_run.md). The example uses four small FASTQ files reconstructed from selected regions of public SEQC2 WES BAM files. It is intended as a technical execution test, not as a biological benchmark. We highly reccomend the users to get familiar with example run, even if they do not plan to execute it, as it provides detailed explanation of workflow structure.
+
 
 ## Configuration
 
-The workflow uses a YAML configuration file:
-
-```text
-config/example_config.yaml
-```
-
-Copy this file to a local, user-specific configuration file:
+The workflow uses a YAML configuration file `config/example_config.yaml`. Copy this file to a local, user-specific configuration file:
 
 ```bash
 cp config/example_config.yaml config/local_config.yaml
@@ -72,35 +66,24 @@ directories:
 
 The `parameters` section contains user-adjustable runtime settings, including Trimmomatic parameters, FASTQ filename suffixes, BWA alignment settings, DeepVariant threads/GPU usage, genotype imputation settings, annotation parallelization, and gene-level feature aggregation parallelization.
 
+The primary gene-level feature used in the workflow is the CADD-weighted average allele fraction (`CADD_weighted_avg_AF`, CWAF). An alternative cumulative metric (`CADD_weighted_cumulated_af`) is also available. The feature used for downstream analysis can be selected in the YAML configuration file:
+
+```yaml
+parameters:
+  feature_column: "CADD_weighted_avg_AF"
+```
+
+
 In the configuration file, `jobs` denotes externally parallelized processes, while `threads` denotes CPU threads used internally by a given tool. These values should be adapted to the available CPU cores, memory, storage throughput, and local scheduler limitations.
 
-Some downstream analytical parameters are intentionally not stored in the global YAML file. Parameters controlling UMAP, clustering, detection-rate thresholding, and gene-level imputation are kept near the beginning of the corresponding R scripts. In particular, users should review and adjust the low- and high-detection-rate thresholds used for MNAR flagging in:
-
-```text
-Gene-level imputation/4_feature_imputation.R
-```
-
-The most important imputation parameters are:
-
-```r
-threshold_low_value <- 0.44
-threshold_high_value <- 0.85
-```
-
-and were adjusted to match the [example run](docs/example_run.md). The low threshold defines when a gene is considered poorly detected in a given sample cluster, while the high threshold defines when the same gene is considered well detected in another sufficiently large cluster. These values control which missing gene-level CWAF values are treated as MNAR and therefore selected for imputation.
-
-
+Some downstream analytical parameters are intentionally **not stored** in the global YAML file but are defined at the beginning of the corresponding R scripts. While most parameters can be used with their default settings, particular attention should be paid to **PARC clustering and gene-level imputation parameters**, which should be adjusted to the characteristics of the analyzed cohort.
 ## Lightweight example run
 
-We highly encourage the users to get familiar with our complete command-by-command  [**example run guide**](docs/example_run.md). 
+We highly recommend reviewing the step-by-step [**example run guide**](docs/example_run.md) to become familiar with the workflow structure and execution.
 
-The example workflow demonstrates the main processing steps from FASTQ files to gene-level feature generation. It is based on four small FASTQ files reconstructed from selected regions of BAM files and is intended only to verify installation, configuration, external resources, and basic workflow execution.
+The lightweight example uses four small FASTQ files reconstructed from public SEQC2 WES BAM files (Zhao et al., 2021) to verify installation, configuration, and basic pipeline execution. Due to its limited size, this dataset is not suitable for demonstrating cohort-level analyses.
 
-The public SEQC2 WES BAM files used to reconstruct the lightweight example FASTQ files originate from the benchmark dataset published by Zhao et al. (2021), which should be cited when using the example data.
-
-Because the complete WES processing workflow is computationally intensive and produces large intermediate files, the example WES dataset is intentionally small. It is sufficient to validate the technical execution of the pipeline, but it is too small to meaningfully demonstrate cohort-level downstream analyses such as sample clustering, detection-rate modeling, MNAR masking, and gene-level imputation.
-
-For this reason, the downstream gene-level imputation module is demonstrated in the example guide using a separate artificial feature-level dataset. This artificial dataset preserves the expected input structure and directory layout while providing enough samples to demonstrate clustering, detection-rate modeling, and imputation behavior.
+Instead, downstream steps, including clustering, detection-rate modeling, and MNAR-aware gene-level imputation, are demonstrated using a separate artificial feature-level dataset with the expected input structure.
 
 ## Workflow overview
 
@@ -116,7 +99,6 @@ Data_pre_processing/Liftover/liftover_bams.sh
 
 This stage performs FASTQ quality control, optional adapter and quality trimming, BWA alignment to GRCh38, coordinate sorting, duplicate marking with Picard, and optional liftover of GRCh37/hg19-aligned BAM files to GRCh38/hg38.
 
-User-adjustable parameters include FASTQ filename suffixes, Trimmomatic adapter and trimming settings, BWA alignment settings, the number of alignment jobs, thread counts, and the input/output directories.
 
 ### 2. Variant calling and joint genotyping
 
@@ -129,7 +111,9 @@ Variant_calling/Joint_genotyping/run_GLnexus.sh
 
 DeepVariant is run per sample and produces VCF/GVCF files. GLnexus then merges the GVCF files and performs cohort-level joint genotyping. Both steps are restricted to the configured exon/splice BED regions.
 
-User-adjustable parameters include the DeepVariant Docker image, BAM input directory, BAM suffix used for variant calling, number of shards, output directories, GLnexus input search root, and runtime resource settings.
+
+
+From this stage, all the downstream outputs will be generated in the directory specified under the `results_dir` parameter in the YAML file.
 
 ### 3. Genotype imputation
 
@@ -141,7 +125,7 @@ Variant_post_processing/1_genotype_imputation.sh
 
 This stage normalizes variants, splits multiallelic sites, restricts records to retained SNVs/indels, conforms genotypes to the reference panel, phases haplotypes, and imputes missing genotypes with Beagle.
 
-Users should configure the Beagle and conform-gt paths, genetic maps, reference panel directory, chromosome naming convention, temporary directories, and parallelization settings. The workflow expects resources to use chromosome names compatible with the configured reference genome.
+
 
 ### 4. Variant annotation
 
@@ -151,9 +135,9 @@ Main script:
 Variant_post_processing/2_annotation.sh
 ```
 
-Observed variants are annotated with ANNOVAR and CADD. The workflow keeps coding and splice-related records for downstream gene-level feature construction.
+Observed variants are annotated with ANNOVAR and CADD. The workflow keeps coding and splice-related SNV records for downstream gene-level feature construction.
 
-Users should configure ANNOVAR paths and databases, CADD script and prescored database paths, annotation output directories, and the number of parallel annotation jobs.
+
 
 ### 5. Gene-level feature generation
 
@@ -164,10 +148,11 @@ Variant_to_gene/gene_aggregation.sh
 Variant_to_gene/cal_features_multi.py
 ```
 
-Variants are aggregated by sample and gene. The main feature is CWAF, computed from allele fraction values weighted by CADD Phred-like scores. The procedure uses the directly observed CADD-scored VCF and, where available, the filtered genotype-imputed VCF.
+Variants are aggregated by sample and gene to generate CADD-weighted allele fraction (CWAF) features. The primary metric, `CADD_weighted_avg_AF`, represents the average allele fraction weighted by CADD Phred-like scores. An alternative metric, `CADD_weighted_cumulated_af`, additionally accounts for the cumulative contribution of variants within a gene.
 
-If a filtered imputed VCF is not available for a chromosome, the aggregation step can calculate features from the observed CADD-scored VCF only. This behavior is useful for reduced example data and for cases where no variants are retained after genotype conformation or filtering.
+Allele fractions are preferentially calculated from observed allelic depths (AD). When unavailable, confidently called homozygous-reference genotypes (GT = 0/0, DP ≥ 5) are assigned AF = 0; otherwise, imputed dosage (DS/2) is used when available.
 
+The procedure combines information from the original CADD-scored VCF and, where available, the genotype-imputed VCF. If the filtered genotype-imputed VCF is unavailable for a chromosome, gene-level features are calculated using the original CADD-scored VCF only.
 ### 6. Feature loading, clustering, detection-rate modeling, and gene-level imputation
 
 Main scripts:
@@ -179,19 +164,22 @@ Gene-level imputation/3_GMM.R
 Gene-level imputation/4_feature_imputation.R
 ```
 
-This stage loads gene-level CWAF features, prepares sample-by-gene matrices, visualizes cohort structure with UMAP, clusters samples with similar CWAF profiles, models gene detection rates across clusters, defines MNAR candidate entries, and performs masked cosine-similarity kNN imputation.
+This stage loads the selected gene-level feature, constructs sample-by-gene matrices, and visualizes cohort structure using UMAP. PARC clustering identifies groups of samples with similar feature profiles reflecting the technical structure, while Gaussian mixture modeling (GMM) of gene detection rates provides candidate thresholds for identifying missing-not-at-random (MNAR) values. These values are subsequently imputed using masked cosine-similarity kNN.
 
-The detection-rate modeling step is used to inspect the distribution of gene detection rates across sample clusters and to support the choice of low- and high-detection-rate thresholds. The thresholds used for MNAR flagging are defined manually at the beginning of `4_feature_imputation.R`, with default values as:
-```r
-threshold_low_value <- 0.44
-threshold_high_value <- 0.85
-```
-selected to match the [**example run workflow**](docs/example_run.md).
+#### 6.1 Parameter selection
 
-A gene is considered potentially under-detected in a cluster when its detection rate in that cluster is below the low threshold and its detection rate in at least one other sufficiently large cluster is above the high threshold. Only missing CWAF values matching this MNAR pattern are selected for imputation.
+Particular attention should be paid to the following parameters:
 
-The user should review these thresholds before applying the imputation step to a new cohort, because defaulte values were adjusted to artificially generated dataset. In reality, they may depend on cohort size, capture-kit composition, feature sparsity, and the observed detection-rate distribution.
+a) **PARC clustering (`2_clustering.R`):** `knn` and `resolution` should be adjusted based on the observed sample cluster structure.
+  - *Users can run `2_clustering.R` multiple times with different `knn` and `resolution` settings, visually comparing the resulting PARC cluster assignments on UMAP. Each run saves a separate cluster mapping file in `Results/Clustering/`, with the corresponding parameters included in its filename. Once the optimal configuration has been selected, the corresponding file should replace `Results/sample_kit_cluster_map.tsv` before proceeding to GMM modeling and gene-level imputation.*
 
+
+
+
+b) **Gene-level imputation (`4_feature_imputation.R`):** `threshold_low_value` and `threshold_high_value` should be selected based on the GMM results from `3_GMM.R`.
+
+
+The current default settings were adjusted for the [example run](docs/example_run.md) and should be reviewed and adapted to the characteristics and results of each analyzed cohort.
 
 ## Main outputs
 
@@ -200,13 +188,20 @@ The workflow creates output subdirectories under the configured `results_dir`.
 Typical output structure:
 
 ```text
-Genotyping/              # GLnexus cohort-level outputs
-Imputation/              # genotype-imputed VCFs and intermediate files
-Annotation/              # ANNOVAR/CADD annotation outputs
-Features/                # per-chromosome gene-level feature files
-Gene_level_imputation/   # loaded feature matrices, UMAPs, clustering, GMM diagnostics, imputed matrices
-Intermediate/            # temporary or step-specific intermediate files
+<results_dir>/
+    Genotyping/                 # GLnexus cohort-level outputs
+    Imputation/                 # Genotype-imputed VCFs and intermediate files
+    Annotation/                 # ANNOVAR/CADD annotation outputs
+    Features/                   # Per-chromosome gene-level feature files
+    Gene_level_imputation/      # Gene-level analysis for each selected feature
+        <feature_column>/
+            Results/            # Feature matrices, clustering, GMM, and gene-level imputation results
+                Clustering/     # Cluster assignments for different PARC configurations
+            Figures/            # UMAP visualizations and clustering plots
+    Intermediate/               # Temporary or step-specific intermediate files
 ```
+
+Gene-level analysis outputs are organized separately for each selected feature (`feature_column`). Some output filenames include the corresponding analysis parameters to distinguish different configurations.
 
 For the lightweight example run, outputs are written under:
 
