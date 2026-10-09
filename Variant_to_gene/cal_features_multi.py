@@ -18,15 +18,15 @@ Usage:
 """
 
 import argparse  # Parsing command-line arguments
-from cyvcf2 import VCF  # pyright: ignore[reportMissingImports] # Fast multisample VCF parser
-import pandas as pd  # Data handling
+import pandas as pd  # pyright: ignore[reportMissingImports]
 import numpy as np   # Numeric operations
-from sklearn.impute import KNNImputer  # For CADD imputation
+from sklearn.impute import KNNImputer # pyright: ignore[reportMissingImports]
 import re  # Regex parsing
 from pathlib import Path
+from cyvcf2 import VCF
+
 
 REPO_DIR = Path(__file__).resolve().parents[1]
-# Path to loss-of-function variants list (gnomAD LoF)
 default_lof_file = REPO_DIR / "Data/gnomad_lofs/gnomad.v2.1.1.all_lofs.hg38.txt"
 
 
@@ -94,8 +94,20 @@ def custom_aggregate(group):
     ph_vals = group['CADD_PHRED'].values
     total_ph = ph_vals.sum()
     # weighted allele frequency (ensure scalar float)
-    # weighted allele frequency (ensure scalar float)
+
+
+    variants_num = len(af_vals)
+
+    #Original CWAF
     weighted_af = np.average(af_vals, weights=ph_vals/total_ph).item() if total_ph > 0 else 0.0
+
+    if total_ph > 0:
+        #Marcel's CWAF
+        weighted_cumulated_af = np.sum(af_vals * (ph_vals/99))
+        weighted_cumulated_af = weighted_cumulated_af * (1 - np.exp(-(np.sum(ph_vals/99))))
+        weighted_cumulated_af = (weighted_cumulated_af / (weighted_cumulated_af + 1)).item() 
+    else:
+        weighted_cumulated_af = 0.0
 
     # High-Function Impact flag
     hfi_flag = int(
@@ -124,12 +136,14 @@ def custom_aggregate(group):
 
     return pd.Series({
         'CADD_weighted_avg_AF': weighted_af,
+        'CADD_weighted_cumulated_af': weighted_cumulated_af,
         'avg_AF': avg_af,
         'avg_CADD_PHRED': avg_ph,
         'max_CADD_PHRED': max_ph,
         'sum_CADD_PHRED': sum_ph,
         'HFI': hfi_flag,
-        'LoH': loh_flag
+        'LoH': loh_flag,
+        'variants_num': variants_num
     })
 
 
@@ -158,8 +172,8 @@ def process_sample(sample, orig_path, imp_ds, variant_info, out_dir, regions=Non
         # Define output path and header for feature file
     sample_out = f"{out_dir}/{sample}.feature.txt"
     header = (
-    "Gene\tCADD_weighted_avg_AF\tavg_AF\tavg_CADD_PHRED\tmax_CADD_PHRED\t"
-    "sum_CADD_PHRED\tHFI\tLoH\n"
+    "Gene\tCADD_weighted_avg_AF\tCADD_weighted_cumulated_af\t"
+    "avg_AF\tavg_CADD_PHRED\tmax_CADD_PHRED\tsum_CADD_PHRED\tHFI\tLoH\tvariants_num\n"
 )
     
 
@@ -178,10 +192,13 @@ def process_sample(sample, orig_path, imp_ds, variant_info, out_dir, regions=Non
         lof_flag = info['LoF']
 
 
-        # APPROACH: 0/0  --> AF=0,  ./. --> DS
+        # APPROACH: 
+        # GT=(0/0) and DP>=5 --> AF=0
+        # GT=(0/0) & DP<5 OR GT=(./.) --> DS
         af = None
         ad = var.format('AD')
-        gt = var.genotypes[idx][:2]  # two first alleles
+        dp = var.format('DP')
+        gt = var.genotypes[idx][:2]  # two first alleles, multiallelic sites were splitted upstream
 
         if ad is not None and len(ad[idx]) > 1:
             counts = ad[idx]
@@ -189,8 +206,9 @@ def process_sample(sample, orig_path, imp_ds, variant_info, out_dir, regions=Non
                 af = counts[1] / counts.sum()
 
         if af is None:
-            if gt == (0, 0):
-                af = 0.0  # homozugous reference → AF = 0
+            dp_i = dp[idx][0] if dp is not None else None
+            if gt[0] == 0 and gt[1] == 0 and dp_i is not None and dp_i >= 5:
+                af = 0.0
             else:
                 ds_arr = imp_ds.get(key)
                 if ds_arr is not None:
@@ -262,6 +280,9 @@ if __name__ == "__main__":
     if args.imputed is not None:
         vcf_imp = VCF(args.imputed, regions=args.regions) if args.regions else VCF(args.imputed)
         vcf_imp.set_threads(4)
+
+        if vcf_orig.samples != vcf_imp.samples:
+            raise ValueError("Sample names or sample order differ between original and imputed VCF.")
 
         for iv in vcf_imp:
             key = f"{iv.CHROM}_{iv.POS}_{iv.REF}_{iv.ALT[0]}"
