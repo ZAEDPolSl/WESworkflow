@@ -16,7 +16,7 @@ if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
 # ============== Clustering parameters can be adjusted ==============
 parc_params <- list(
 	knn = 30,
-	resolution = 1
+	resolution = 0.5
 )
 # ===================================================================
 
@@ -98,15 +98,19 @@ resolve_path <- function(path) {
 }
 
 results_dir <- resolve_path(read_config("directories.results_dir"))
-output_dir <- file.path(results_dir, "Gene_level_imputation")
+feature_column <- read_config("parameters.feature_column")
+output_dir <- file.path(results_dir, "Gene_level_imputation", feature_column)
 figures_dir <- file.path(output_dir, "Figures")
+cluster_maps_dir <- file.path(output_dir, "Results", "Clustering")
 
-umap_file <- file.path(output_dir, "raw_umap_result.tsv")
-long_tsv <- file.path(output_dir, "raw_ft_long.tsv")
+umap_file <- file.path(output_dir, "Results", "raw_umap_result.tsv")
+long_tsv <- file.path(output_dir, "Results", "raw_ft_long.tsv")
 parc_script <- file.path(script_dir, "functions", "run_parc.py")
 
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(output_dir, "Results"), recursive = TRUE, showWarnings = FALSE)
+dir.create(cluster_maps_dir, recursive = TRUE, showWarnings = FALSE)
 
 if (!file.exists(umap_file)) {
 	stop("UMAP file not found: ", umap_file)
@@ -142,11 +146,11 @@ parc_knn <- parc_params$knn
 source_python(parc_script)
 
 
-run_parc <- function(long_tsv, knn, resolution, umap_dt) {
+run_parc <- function(long_tsv, feature_column, knn, resolution, umap_dt) {
 	cat("Running PARC with k=", knn, ", resolution=", resolution, "\n", sep = "")
-
 	samples_labels <- parc_labels_from_long_tsv(
 		long_tsv,
+		feature_column = feature_column,
 		knn = as.integer(knn),
 		res = resolution
 	)
@@ -165,23 +169,34 @@ run_parc <- function(long_tsv, knn, resolution, umap_dt) {
 
 	umap_parc[, Cluster := as.factor(Cluster)]
 
-	plot_title <- paste0("k=", knn, " resolution=", resolution)
+	plot_title <- "PARC clustering"
+	plot_subtitle <- paste0("k=", knn, " resolution=", resolution)
+	plot_caption <- paste(
+		paste0(names(table(umap_parc$Cluster)), ": ", as.integer(table(umap_parc$Cluster))),
+		collapse = " | "
+	)
 
 	p <- ggplot(umap_parc, aes(x = UMAP1, y = UMAP2, color = Cluster)) +
-		geom_point(size = 1) +
+		geom_point(size = 1, alpha = 0.5) +
 		theme_test() +
 		labs(
 			title = plot_title,
+			subtitle = plot_subtitle,
+			caption = plot_caption,
 			x = "UMAP 1",
 			y = "UMAP 2"
 		) +
-		scale_color_discrete_qualitative(palette = "Dark3") + coord_equal()
+		scale_color_discrete_qualitative(palette = "Dark3") + 
+		theme(aspect.ratio = 1) +
+		guides(color = guide_legend(override.aes = list(size = 3, alpha = 0.6)))
+
 
 	list(plot = p, data = umap_parc)
 }
 
 parc <- run_parc(
 	long_tsv = long_tsv,
+	feature_column = feature_column,
 	knn = parc_knn,
 	resolution = parc_params$resolution,
 	umap_dt = umap_result
@@ -189,22 +204,28 @@ parc <- run_parc(
 
 output_tag <- paste0("k", parc_knn, "r", parc_params$resolution)
 
-fwrite(
-	parc$data,
-	file.path(output_dir, paste0("umap_parc_", output_tag, ".tsv")),
-	sep = "\t"
-)
+#fwrite(
+#	parc$data,
+#	file.path(output_dir, "Results", paste0("umap_parc_", output_tag, ".tsv")),
+#	sep = "\t"
+#)
 
 sample_map <- copy(parc$data)
 sample_map[, c("UMAP1", "UMAP2") := NULL]
 
 fwrite(
 	sample_map,
-	file.path(output_dir, "sample_kit_cluster_map.tsv"),
+	file.path(output_dir, "Results", "sample_kit_cluster_map.tsv"),
 	sep = "\t"
 )
 
-pdf(file.path(figures_dir, "PARC_clustering.pdf"), width = 6, height = 5.5)
+fwrite(
+	sample_map,
+	file.path(cluster_maps_dir, paste0(output_tag,"_cluster_map.tsv")),
+	sep = "\t"
+)
+
+pdf(file.path(figures_dir, paste0("PARC_clustering_", output_tag,".pdf")), width = 6, height = 5.5)
 print(parc$plot)
 dev.off()
 
