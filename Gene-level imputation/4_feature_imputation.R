@@ -34,8 +34,8 @@ if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
 # in that group is <= threshold_low_value, while its detection rate in
 # another sufficiently large group is >= threshold_high_value.
 # currently set thresholds are adjusted to example run
-threshold_low_value <- 0.234
-threshold_high_value <- 0.811
+threshold_low_value <- 0.44
+threshold_high_value <- 0.85
 
 # ================== these parameters can be adjusted ================
 

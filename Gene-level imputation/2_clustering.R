@@ -16,7 +16,7 @@ if (nzchar(Sys.getenv("CONDA_PREFIX")) && dir.exists(conda_lib)) {
 # ============== Clustering parameters can be adjusted ==============
 parc_params <- list(
 	knn = 30,
-	resolution = 0.5
+	resolution = 1
 )
 # ===================================================================
 
